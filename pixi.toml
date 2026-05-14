@@ -1,0 +1,49 @@
+[workspace]
+authors = ["Ben Yang <byang11259@gmail.com>"]
+channels = ["https://prefix.dev/robostack-humble", "https://fast.prefix.dev/conda-forge"]
+name = "portable_data_collection"
+platforms = ["linux-64"]
+
+[tasks]
+# Build the insta360 ROS2 driver. Run once after cloning, and again if
+# you pull changes that touch src/ or CMakeLists.txt.
+build = { cmd = "colcon build --symlink-install", cwd = "ros2_ws" }
+
+# Live capture: subscribes to /dual_fisheye/image and serves a viser
+# preview at http://localhost:8085.
+capture = "python -m pose_calibration.capture_node"
+
+[dependencies]
+python = "*"
+
+# ROS2 Humble (robostack). `ros-humble-desktop` pulls rclpy, sensor_msgs,
+# cv_bridge, image_transport, camera_info_manager, std_msgs, std_srvs, etc.
+ros-humble-desktop = "*"
+# `ros-humble-imu-tools` is NOT pulled here: its latest robostack build (2.1.5)
+# wants Python ≥3.10 but `ros-humble-desktop` is pinned to 3.9, so they can't
+# coexist. The insta360 driver references imu_tools only via
+# `find_package(... REQUIRED)` (the C++ code never #includes it), and the
+# bringup launch uses it only for the optional Madgwick filter. Install it
+# via apt on the system if you need the driver build to find it:
+#     sudo apt install ros-humble-imu-tools
+
+# Build tooling for the insta360_ros_driver C++ package.
+colcon-common-extensions = "*"
+compilers = "*"
+cmake = "*"
+pkg-config = "*"
+make = "*"
+ninja = "*"
+rosdep = "*"
+
+# Native deps the insta360 driver links against
+# (libavcodec / libavformat / libavutil / libswscale).
+ffmpeg = "*"
+
+[target.linux-64.dependencies]
+libgl-devel = "*"
+
+[pypi-dependencies]
+viser = "==1.0.21"
+tyro = "*"
+pyyaml = "*"

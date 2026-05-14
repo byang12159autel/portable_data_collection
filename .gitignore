@@ -1,0 +1,24 @@
+# Pixi-managed conda env (multi-GB)
+.pixi/
+
+# Test videos / recordings
+data/
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Colcon build outputs (inside ros2_ws/)
+build/
+install/
+log/
+
+# Per-user / editor state
+.claude/settings.local.json
+.vscode/
+.idea/
+
+# Captured frames at the repo root (capture_node default output dir)
+capture_*/

@@ -1,0 +1,46 @@
+box:
+  label: ''
+  T_ee_box:
+    translation: [0.0, 0.0, 0.032]
+    rotation_xyz_deg: [0.0, 0.0, 0.0]
+markers:
+  box_marker0:
+    id: 0
+    size: 0.1
+    dictionary: DICT_4X4_50
+    label: ''
+    T_box_marker:
+      translation: [0.0, 0.0, 0.1325]
+      rotation_xyz_deg: [0.0, 0.0, 0.0]
+  box_marker1:
+    id: 1
+    size: 0.1
+    dictionary: DICT_4X4_50
+    label: ''
+    T_box_marker:
+      translation: [0.0675, 0.0, 0.065]
+      rotation_xyz_deg: [-0.0, 90.0, 0.0]
+  box_marker2:
+    id: 2
+    size: 0.1
+    dictionary: DICT_4X4_50
+    label: ''
+    T_box_marker:
+      translation: [-0.0675, 0.0, 0.065]
+      rotation_xyz_deg: [0.0, -90.0, 0.0]
+  box_marker3:
+    id: 3
+    size: 0.1
+    dictionary: DICT_4X4_50
+    label: ''
+    T_box_marker:
+      translation: [0.0, 0.0675, 0.065]
+      rotation_xyz_deg: [-90.0, 0.0, 0.0]
+  box_marker4:
+    id: 4
+    size: 0.1
+    dictionary: DICT_4X4_50
+    label: ''
+    T_box_marker:
+      translation: [0.0, -0.0675, 0.065]
+      rotation_xyz_deg: [-90.0, 0.0, 180.0]

@@ -1,0 +1,18 @@
+# Example marker config. Populate `markers:` for single-ArUco detection or
+# `charuco:` for ChArUco board detection. Sizes are in metres.
+
+markers:
+  tag0:
+    id: 0
+    size: 0.08
+    dictionary: DICT_4X4_50
+    label: "World origin"
+
+charuco:
+  board0:
+    squares_x: 5
+    squares_y: 7
+    square_length: 0.04
+    marker_length: 0.03
+    dictionary: DICT_4X4_50
+    label: "Charuco 5x7"

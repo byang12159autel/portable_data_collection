@@ -1,0 +1,4 @@
+[submodule "ros2_ws/src/insta360_ros_driver"]
+	path = ros2_ws/src/insta360_ros_driver
+	url = git@github.com:byang12159autel/insta360_ros_driver.git
+	branch = humble
