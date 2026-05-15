@@ -86,6 +86,11 @@ class Args:
     loop: bool = True
     """Loop playback when the video ends."""
 
+    intrinsics: Path | None = None
+    """Optional pinhole_intrinsics.npz (with ``K``, ``D``, ``image_size``). When
+    set, each frame is undistorted via ``cv2.undistort`` before detection — the
+    overlay then shows detections on the *rectified* (zero-distortion) image."""
+
 
 def _open_capture(path: Path) -> tuple[cv2.VideoCapture, int, float]:
     cap = cv2.VideoCapture(str(path))
@@ -255,6 +260,19 @@ def main(args: Args) -> None:
     print(f"Video: {args.video}  ({n_frames} frames @ {video_fps:.1f} FPS)")
     print(f"Detectors active: {len(detect_fns)}")
 
+    undistort_maps: tuple[np.ndarray, np.ndarray] | None = None
+    if args.intrinsics is not None:
+        d = np.load(str(args.intrinsics))
+        K, D = d["K"], d["D"]
+        w, h = (int(d["image_size"][0]), int(d["image_size"][1]))
+        # Use K itself as the new camera matrix — keeps the rectified frame at
+        # the same intrinsics so downstream PnP uses the calibrated K directly.
+        m1, m2 = cv2.initUndistortRectifyMap(
+            K, D, R=np.eye(3), newCameraMatrix=K, size=(w, h), m1type=cv2.CV_16SC2
+        )
+        undistort_maps = (m1, m2)
+        print(f"Rectifying frames with {args.intrinsics} ({w}x{h})")
+
     def detect_and_draw(rgb: np.ndarray) -> tuple[np.ndarray, int]:
         n_total = 0
         for fn in detect_fns:
@@ -311,6 +329,8 @@ def main(args: Args) -> None:
                     time.sleep(0.05)
                     continue
 
+                if undistort_maps is not None:
+                    bgr = cv2.remap(bgr, undistort_maps[0], undistort_maps[1], cv2.INTER_LINEAR)
                 rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
                 annotated, n_detected = detect_and_draw(rgb)
                 image_handle.image = annotated

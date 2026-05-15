@@ -1,16 +1,22 @@
 # calib.io Kalibr/AprilGrid target.
-#   grid:         7 cols x 10 rows  (70 tags total)
+#   grid:         10 cols x 7 rows  (70 tags total)
 #   tag size:     50 mm
 #   tag spacing:  15 mm  ->  0.30 as fraction of tag size (Kalibr ratio)
 #   dictionary:   AprilTag 36h11
 #   start_id:     0      (calib.io 'Start Id')
+#
+# IDs increment row-major from the bottom-left tag (Kalibr convention) —
+# verified empirically against detected positions in
+# data/insta360_calibration/VID_20260515_152323_00_003_lens0.mp4:
+# tags 33, 34, 35 share an image row (consistent with cols=10), and
+# tag 43 sits directly above tag 33 in the same column.
 
 apriltag_grid:
-  calib_io_7x10:
-    tag_cols: 7
-    tag_rows: 10
+  calib_io_10x7:
+    tag_cols: 10
+    tag_rows: 7
     tag_size: 0.050
     tag_spacing: 0.30
     dictionary: DICT_APRILTAG_36h11
     start_id: 0
-    label: "calib.io 7x10 AprilGrid (50mm tag, 15mm spacing)"
+    label: "calib.io 10x7 AprilGrid (50mm tag, 15mm spacing)"
