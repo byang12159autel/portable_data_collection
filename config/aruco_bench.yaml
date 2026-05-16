@@ -1,0 +1,16 @@
+markers:
+  tag18:
+    id: 18
+    size: 0.149
+    dictionary: DICT_4X4_50
+    label: ""
+  tag19:
+    id: 19
+    size: 0.149
+    dictionary: DICT_4X4_50
+    label: ""
+  tag20:
+    id: 20
+    size: 0.149
+    dictionary: DICT_4X4_50
+    label: ""

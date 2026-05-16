@@ -33,6 +33,7 @@ Usage::
 from __future__ import annotations
 
 import dataclasses
+import math
 import time
 from pathlib import Path
 from typing import Callable, Literal
@@ -87,9 +88,15 @@ class Args:
     """Loop playback when the video ends."""
 
     intrinsics: Path | None = None
-    """Optional pinhole_intrinsics.npz (with ``K``, ``D``, ``image_size``). When
-    set, each frame is undistorted via ``cv2.undistort`` before detection — the
-    overlay then shows detections on the *rectified* (zero-distortion) image."""
+    """Optional intrinsics .npz. Two formats are auto-detected:
+      * Pinhole — ``K``, ``D``, ``image_size``: each frame is undistorted via
+        ``cv2.undistort`` before detection.
+      * Flat fisheye (``bench_subpixel.py`` / ``pinhole_calibrate.py`` output)
+        — adds ``fov_deg`` + ``pinhole_size``: each raw fisheye frame is
+        equidistant-unwrapped to the calibration's pinhole view (Stage 1 of
+        ``two_stage_calibrate.py``). The npz's ``K, D`` ride along for
+        downstream PnP; the image itself is the rough-pinhole view.
+    In both cases the overlay shows detections on the rectified image."""
 
 
 def _open_capture(path: Path) -> tuple[cv2.VideoCapture, int, float]:
@@ -260,18 +267,41 @@ def main(args: Args) -> None:
     print(f"Video: {args.video}  ({n_frames} frames @ {video_fps:.1f} FPS)")
     print(f"Detectors active: {len(detect_fns)}")
 
-    undistort_maps: tuple[np.ndarray, np.ndarray] | None = None
+    rectify_fn: Callable[[np.ndarray], np.ndarray] | None = None
     if args.intrinsics is not None:
         d = np.load(str(args.intrinsics))
-        K, D = d["K"], d["D"]
-        w, h = (int(d["image_size"][0]), int(d["image_size"][1]))
-        # Use K itself as the new camera matrix — keeps the rectified frame at
-        # the same intrinsics so downstream PnP uses the calibrated K directly.
-        m1, m2 = cv2.initUndistortRectifyMap(
-            K, D, R=np.eye(3), newCameraMatrix=K, size=(w, h), m1type=cv2.CV_16SC2
-        )
-        undistort_maps = (m1, m2)
-        print(f"Rectifying frames with {args.intrinsics} ({w}x{h})")
+        if "fov_deg" in d.files and "pinhole_size" in d.files:
+            # Flat fisheye npz: replicate Stage 1 (equidistant unwrap) so
+            # detections happen in the same view the calibration was fit on.
+            from pose_calibration.insta360.rectify import Rectifier
+            pinhole_size = (int(d["pinhole_size"][0]), int(d["pinhole_size"][1]))
+            fov_deg = float(d["fov_deg"])
+            fw = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            fh = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            f_eq = fw / math.pi
+            K_fish = np.array(
+                [[f_eq, 0.0, fw / 2.0],
+                 [0.0,  f_eq, fh / 2.0],
+                 [0.0,  0.0,  1.0]],
+                dtype=np.float64,
+            )
+            rectifier = Rectifier.build(K_fish, np.zeros(4), pinhole_size, fov_deg)
+            rectify_fn = rectifier.apply
+            print(
+                f"Equidistant unwrap {fw}x{fh} -> {pinhole_size[0]}x{pinhole_size[1]} "
+                f"@ {fov_deg:.1f} deg ({args.intrinsics.name})"
+            )
+        else:
+            K, D = d["K"], d["D"]
+            w, h = (int(d["image_size"][0]), int(d["image_size"][1]))
+            # Use K itself as the new camera matrix — keeps the rectified frame at
+            # the same intrinsics so downstream PnP uses the calibrated K directly.
+            m1, m2 = cv2.initUndistortRectifyMap(
+                K, D, R=np.eye(3), newCameraMatrix=K, size=(w, h), m1type=cv2.CV_16SC2
+            )
+            def rectify_fn(bgr: np.ndarray) -> np.ndarray:  # type: ignore[no-redef]
+                return cv2.remap(bgr, m1, m2, cv2.INTER_LINEAR)
+            print(f"Rectifying frames with {args.intrinsics} ({w}x{h})")
 
     def detect_and_draw(rgb: np.ndarray) -> tuple[np.ndarray, int]:
         n_total = 0
@@ -329,8 +359,8 @@ def main(args: Args) -> None:
                     time.sleep(0.05)
                     continue
 
-                if undistort_maps is not None:
-                    bgr = cv2.remap(bgr, undistort_maps[0], undistort_maps[1], cv2.INTER_LINEAR)
+                if rectify_fn is not None:
+                    bgr = rectify_fn(bgr)
                 rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
                 annotated, n_detected = detect_and_draw(rgb)
                 image_handle.image = annotated
