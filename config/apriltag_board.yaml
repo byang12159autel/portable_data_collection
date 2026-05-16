@@ -20,3 +20,20 @@ apriltag_grid:
     dictionary: DICT_APRILTAG_36h11
     start_id: 0
     label: "calib.io 10x7 AprilGrid (50mm tag, 15mm spacing)"
+
+  # User-confirmed: this physical board uses 30mm gap on 50mm tags
+  # (ratio 0.60), NOT the 15mm gap the calib_io_10x7 entry implies.
+  # The original empirical fit (debug_global_spacing.py) landed at 0.54
+  # because the equidistant-unwrap distortion biased the fixed-K residual;
+  # cv2.calibrateCamera with the correct 0.60 fits K + D simultaneously,
+  # so the bias goes away. Use this entry for lens0_combined.mp4 and any
+  # recording on the same physical board. Keep calib_io_10x7 around in
+  # case there are other recordings that actually use a 15mm-gap board.
+  user_10x7_gap30:
+    tag_cols: 10
+    tag_rows: 7
+    tag_size: 0.050
+    tag_spacing: 0.60
+    dictionary: DICT_APRILTAG_36h11
+    start_id: 0
+    label: "User-confirmed 10x7 AprilGrid (50mm tag, 30mm spacing)"
