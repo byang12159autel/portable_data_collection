@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """End-to-end Insta360 preview: rectify + detect, in viser.
 
-Reads the two per-lens videos produced by ``insta360.convert``,
+Reads the two per-lens videos produced by ``camera.convert``,
 undistorts each to a single virtual pinhole using calibrated
 intrinsics, runs the configured marker detectors on each rectified
 view, and previews both lenses side-by-side with the familiar
@@ -10,9 +10,19 @@ Play/Pause + frame slider GUI from ``replay_video``.
 If only one lens video is provided, the missing side is rendered as a
 black panel.
 
+This app composes a :class:`PreviewPipeline` per lens. Swap a stage by
+changing one constructor argument:
+
+  - **Calibration method** -- ``IntrinsicsBundle.load`` already routes
+    fisheye, two-stage, and pinhole calibrations through the same
+    ``Rectifier`` factory. To use a different rectifier entirely, build
+    one satisfying the :class:`Rectifier` protocol and pass it in.
+  - **Detection** -- pass any callables matching the ``DrawingDetector``
+    signature; ``_build_detector_fns`` produces them from YAML configs.
+
 Usage::
 
-    pixi run python -m pose_calibration.insta360.replay_insta \\
+    pixi run python -m pose_calibration.apps.replay_insta \\
         --front-video data/scene_lens0.mp4 \\
         --back-video data/scene_lens1.mp4 \\
         --intrinsics data/insta360_intrinsics.npz \\
@@ -26,18 +36,18 @@ import dataclasses
 import sys
 import time
 from pathlib import Path  # noqa: TC003 — tyro needs Path at runtime
-from typing import Callable, Literal
+from typing import Literal
 
 import cv2
 import numpy as np
 import tyro
 import viser
 
-from pose_calibration.insta360.rectify import IntrinsicsBundle, Rectifier
-from pose_calibration.replay_video import _build_detector_fns
+from pose_calibration.apps.replay_video import _build_detector_fns
+from pose_calibration.calibration.rectify import IntrinsicsBundle
+from pose_calibration.pipeline import PreviewPipeline
 
 TargetType = Literal["aruco", "charuco", "apriltag", "apriltag_grid", "multi"]
-DetectFn = Callable[[np.ndarray], tuple[np.ndarray, int]]
 
 
 @dataclasses.dataclass
@@ -45,7 +55,7 @@ class Args:
     """Rectify + detect Insta360 per-lens videos, preview in viser."""
 
     intrinsics: Path
-    """Per-lens fisheye calibration .npz from insta360.calibrate."""
+    """Per-lens fisheye calibration .npz from calibration.fisheye."""
 
     front_video: Path | None = None
     """Per-lens recording of the front lens."""
@@ -90,7 +100,7 @@ class _DetectorArgs:
     marker_configs: tuple[Path, ...] = ()
 
 
-def _build_detectors(args: Args) -> list[DetectFn]:
+def _build_detectors(args: Args) -> list:
     detector_args = _DetectorArgs(
         target_type=args.target_type,
         tag_dictionary=args.tag_dictionary,
@@ -120,6 +130,16 @@ def _open(path: Path) -> tuple[cv2.VideoCapture, int, float]:
     return cap, max(n, 1), fps
 
 
+@dataclasses.dataclass
+class _LensFeed:
+    """One lens's video capture paired with its PreviewPipeline."""
+
+    cap: cv2.VideoCapture
+    pipeline: PreviewPipeline
+    n_frames: int
+    fps: float
+
+
 def main(args: Args) -> None:
     if args.front_video is None and args.back_video is None:
         print("Error: at least one of --front-video / --back-video is required", file=sys.stderr)
@@ -127,21 +147,6 @@ def main(args: Args) -> None:
 
     bundle = IntrinsicsBundle.load(args.intrinsics)
     out_size = (args.out_width, args.out_height)
-
-    lens_state: dict[str, tuple[cv2.VideoCapture, Rectifier, int, float]] = {}
-    for lens, video in [("front", args.front_video), ("back", args.back_video)]:
-        if video is None:
-            continue
-        rectifier = bundle.rectifier_for(lens, out_size, args.fov_deg)
-        cap, n, fps = _open(video)
-        lens_state[lens] = (cap, rectifier, n, fps)
-        print(f"[{lens}] {video}  ({n} frames @ {fps:.1f} FPS)")
-
-    n_frames = min(state[2] for state in lens_state.values())
-    native_fps = min(state[3] for state in lens_state.values())
-    play_fps = args.fps if args.fps > 0 else native_fps
-    frame_dt = 1.0 / play_fps
-
     detect_fns = _build_detectors(args)
     print(f"Detectors active: {len(detect_fns)}")
     print(
@@ -149,12 +154,27 @@ def main(args: Args) -> None:
         f"{args.fov_deg:.1f} deg FOV"
     )
 
-    def detect_and_draw(rgb: np.ndarray) -> tuple[np.ndarray, int]:
-        n_total = 0
-        for fn in detect_fns:
-            rgb, k = fn(rgb)
-            n_total += k
-        return rgb, n_total
+    # Compose one PreviewPipeline per lens. The Rectifier is swappable
+    # (currently SinglePinhole via IntrinsicsBundle.rectifier_for); the
+    # detect_fns list is swappable (any DrawingDetector callables).
+    feeds: dict[str, _LensFeed] = {}
+    for lens, video in [("front", args.front_video), ("back", args.back_video)]:
+        if video is None:
+            continue
+        rectifier = bundle.rectifier_for(lens, out_size, args.fov_deg)
+        cap, n, fps = _open(video)
+        feeds[lens] = _LensFeed(
+            cap=cap,
+            pipeline=PreviewPipeline(rectifier=rectifier, detect_fns=detect_fns),
+            n_frames=n,
+            fps=fps,
+        )
+        print(f"[{lens}] {video}  ({n} frames @ {fps:.1f} FPS)")
+
+    n_frames = min(f.n_frames for f in feeds.values())
+    native_fps = min(f.fps for f in feeds.values())
+    play_fps = args.fps if args.fps > 0 else native_fps
+    frame_dt = 1.0 / play_fps
 
     server = viser.ViserServer(port=args.port)
     image_handle = server.gui.add_image(
@@ -187,8 +207,8 @@ def main(args: Args) -> None:
             now = time.time()
 
             if pending_seek is not None:
-                for cap, _r, _n, _fps in lens_state.values():
-                    cap.set(cv2.CAP_PROP_POS_FRAMES, pending_seek)
+                for f in feeds.values():
+                    f.cap.set(cv2.CAP_PROP_POS_FRAMES, pending_seek)
                 pending_seek = None
                 should_read = True
             elif play_btn.value and (now - last_frame_time) >= frame_dt:
@@ -200,21 +220,20 @@ def main(args: Args) -> None:
                 panels: dict[str, np.ndarray] = {}
                 counts: dict[str, int] = {}
                 end_reached = False
-                for lens, (cap, rectifier, _n, _fps) in lens_state.items():
-                    ok, bgr = cap.read()
+                for lens, feed in feeds.items():
+                    ok, bgr = feed.cap.read()
                     if not ok:
                         end_reached = True
                         break
-                    rgb = cv2.cvtColor(rectifier.apply(bgr), cv2.COLOR_BGR2RGB)
-                    annotated, k = detect_and_draw(rgb)
+                    annotated, k = feed.pipeline.process_bgr(bgr)
                     _label_lens(annotated, lens.upper())
                     panels[lens] = annotated
                     counts[lens] = k
 
                 if end_reached:
                     if args.loop:
-                        for cap, _r, _n, _fps in lens_state.values():
-                            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        for f in feeds.values():
+                            f.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                         continue
                     play_btn.value = False
                     time.sleep(0.05)
@@ -228,7 +247,7 @@ def main(args: Args) -> None:
                 n_b = counts.get("back", 0)
                 detected_display.value = f"{n_f + n_b}  (front={n_f}, back={n_b})"
 
-                any_cap = next(iter(lens_state.values()))[0]
+                any_cap = next(iter(feeds.values())).cap
                 frame_idx = max(int(any_cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1, 0)
                 muted_slider = True
                 frame_slider.value = frame_idx
@@ -240,8 +259,8 @@ def main(args: Args) -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        for cap, _r, _n, _fps in lens_state.values():
-            cap.release()
+        for f in feeds.values():
+            f.cap.release()
 
 
 if __name__ == "__main__":

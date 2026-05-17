@@ -5,27 +5,46 @@ replay for verifying detection.
 
 ## Layout
 
+The pipeline is split into stage subpackages so each step can be swapped
+independently. Stage protocols live in `pose_calibration/pipeline.py`;
+each subpackage holds the implementations that satisfy them.
+
 ```
-pose_calibration/      Python package (marker detection, capture node, replay)
-  detect_marker.py     ArUco / ChArUco / AprilTag / AprilGrid detection + YAML loaders
-  capture_node.py      ROS2 node: subscribes to insta360 image topic, viser preview, capture button
-  replay_video.py      Replay a recorded video with detection overlays in viser
-  compute_pose.py      Eye-to-hand calibration (legacy avantbot imports; pending rewrite)
-  insta360/            Offline pipeline for .insv recordings (no ROS, no camera)
-    convert.py         .insv -> two per-lens .mp4s (X4/X5 store one stream per lens)
-    inspect_insv.py    ffprobe summary + per-stream frame0 dump
-    io.py              Side-by-side splitter for the live USB stream (ROS path only)
-    calibrate.py       Per-lens fisheye calibration from a board recording
-    auto_calibrate.py  Sweep a grid of calibrate.py params, pick first acceptable result
-    two_stage_calibrate.py  Equidistant unwrap + pinhole refine (fallback when fisheye won't converge)
-    rectify.py         Fisheye -> single virtual pinhole + per-lens .mp4 export
-    replay_insta.py    End-to-end: rectify + detect, viser side-by-side preview
+pose_calibration/
+  pipeline.py          Stage Protocols (FrameSource, Calibrator, Rectifier,
+                       Detector, PoseEstimator) + Pipeline composition class
+  markers/             Marker detection — implements Detector
+    detect.py          ArUco / ChArUco / AprilTag / AprilGrid + YAML loaders
+  calibration/         Camera calibration — implements Calibrator + Rectifier
+    fisheye.py         Per-lens cv2.fisheye.calibrate (primary path)
+    two_stage.py       Equidistant unwrap + pinhole refine (fragile-fisheye fallback)
+    pinhole.py         Standard cv2.calibrateCamera for already-unwarped inputs
+    auto.py            Sweep thresholds, pick first acceptable result
+    rectify.py         Fisheye → virtual pinhole LUT; loads any of the above
+  camera/              General camera I/O
+    convert.py         .insv → two per-lens .mp4s (X4/X5 store one stream per lens)
+    inspect.py         ffprobe summary + per-stream frame0 dump
+    split.py           Side-by-side splitter for the live USB stream (ROS path)
+  pose/                Camera-pose estimation — implements PoseEstimator
+    known_board.py     AprilGrid with layout from config; pooled PnP
+    learned_layout.py  Independent ArUco markers; layout learned from co-visibility
+  apps/                Entry-point scripts that compose a Pipeline
+    replay_video.py    Replay any video with detection overlays in viser
+    replay_insta.py    End-to-end Insta360: rectify + detect, side-by-side viser
+    capture_node.py    ROS2 capture node + viser preview + capture button
+scripts/
+  debug/               One-off investigation scripts
+  bench/               Sub-pixel detection benchmark
 config/                Marker / board YAMLs
 data/                  Sample videos
 ros2_ws/src/
   insta360_ros_driver/ Camera driver (ai4ce/insta360_ros_driver)
 pixi.toml              Conda + pip env spec (robostack-humble + viser + tyro)
 ```
+
+To switch a stage's implementation, change one import in the calling
+`apps/` script (or write a new class against the relevant protocol and
+drop it into the matching subpackage).
 
 ## Setup
 
@@ -49,7 +68,7 @@ Verify both ArUco markers (on a calibration box) **and** an AprilGrid board
 in the same frame:
 
 ```bash
-pixi run python -m pose_calibration.replay_video \
+pixi run python -m pose_calibration.apps.replay_video \
     --video data/iphone_charuco+april.mov --target-type multi \
     --marker-configs config/aruco_set.yaml config/apriltag_board.yaml
 ```
@@ -106,13 +125,13 @@ independent H.265 video streams (one per lens; X4/X5 are 1920x1920 @
 Verify the dual-stream layout with `ffprobe -show_entries stream=...`.
 
 **2. Demux to per-lens mp4s** —
-`pose_calibration.insta360.convert` runs ffmpeg with `-map 0:v:0` and
+`pose_calibration.camera.convert` runs ffmpeg with `-map 0:v:0` and
 `-map 0:v:1` as a stream-copy (no re-encode). After this step each
 lens behaves like an ordinary fisheye video; the 360°/dual-fisheye
 nature of the source is gone.
 
 ```bash
-pixi run python -m pose_calibration.insta360.convert \
+pixi run python -m pose_calibration.camera.convert \
     --input data/VID_20260515_..._00_001.insv
 ```
 
@@ -137,7 +156,7 @@ reprojection error. Re-running with only `--front-video` or only
 for splitting calibration across multiple recordings.
 
 ```bash
-pixi run python -m pose_calibration.insta360.calibrate \
+pixi run python -m pose_calibration.calibration.fisheye \
     --front-video data/calib_lens0.mp4 \
     --back-video  data/calib_lens1.mp4 \
     --marker-config config/apriltag_board.yaml \
@@ -162,7 +181,7 @@ result that meets quality criteria (RMS < 2 px, focal in [400, 800],
 saves the best result by RMS so you can decide.
 
 ```bash
-pixi run python -m pose_calibration.insta360.auto_calibrate \
+pixi run python -m pose_calibration.calibration.auto \
     --insv data/<recording>.insv \
     --marker-config config/apriltag_board.yaml \
     --output data/insta360_intrinsics.npz
@@ -199,7 +218,7 @@ auto-detect two-stage results in the `.npz` and apply the composed
 LUT — no other code paths change.
 
 ```bash
-pixi run python -m pose_calibration.insta360.two_stage_calibrate \
+pixi run python -m pose_calibration.calibration.two_stage \
     --front-video data/<recording>_lens0.mp4 \
     --back-video  data/<recording>_lens1.mp4 \
     --marker-config config/apriltag_board.yaml \
@@ -226,7 +245,7 @@ Cost: the chosen FOV (default 110°) clips ~half of each lens's ~190°
 FOV; markers off-axis fall outside the rectified frame.
 
 ```bash
-pixi run python -m pose_calibration.insta360.rectify \
+pixi run python -m pose_calibration.calibration.rectify \
     --front-video data/scene_lens0.mp4 \
     --back-video  data/scene_lens1.mp4 \
     --intrinsics data/insta360_intrinsics.npz \
@@ -243,7 +262,7 @@ For a quick interactive preview that runs steps 4 + 5 together with no
 intermediate mp4s, use `replay_insta.py`:
 
 ```bash
-pixi run python -m pose_calibration.insta360.replay_insta \
+pixi run python -m pose_calibration.apps.replay_insta \
     --front-video data/scene_lens0.mp4 \
     --back-video  data/scene_lens1.mp4 \
     --intrinsics data/insta360_intrinsics.npz \
@@ -304,7 +323,7 @@ will hold a list of them with non-identity `R` rotations.
 After the insta360 driver is running and publishing on `/dual_fisheye/image`:
 
 ```bash
-pixi run python -m pose_calibration.capture_node \
+pixi run python -m pose_calibration.apps.capture_node \
     --target-type multi \
     --marker-configs config/aruco_set.yaml config/apriltag_board.yaml
 ```

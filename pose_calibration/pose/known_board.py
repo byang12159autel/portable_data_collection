@@ -15,7 +15,7 @@ The viser scene shows:
 
 Usage::
 
-    pixi run python -m pose_calibration.insta360.pose_history \\
+    pixi run python -m pose_calibration.pose.known_board \\
         --video data/insta360_calibration/lens0_combined.mp4 \\
         --intrinsics data/insta360_calibration/lens0_combined_subpixel_best.npz \\
         --marker-config config/apriltag_board.yaml \\
@@ -38,11 +38,11 @@ import numpy as np
 import tyro
 import viser
 
-from pose_calibration.detect_marker import (
+from pose_calibration.calibration.rectify import Rectifier
+from pose_calibration.markers.detect import (
     apriltag_grid_object_points,
     load_apriltag_grid_configs,
 )
-from pose_calibration.insta360.rectify import Rectifier
 
 
 @dataclasses.dataclass

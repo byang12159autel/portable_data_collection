@@ -14,7 +14,7 @@ FOV the camera actually offers.
 CLI mode writes one rectified ``.mp4`` per lens plus
 ``pinhole_intrinsics.npz`` for downstream pose code::
 
-    pixi run python -m pose_calibration.insta360.rectify \\
+    pixi run python -m pose_calibration.calibration.rectify \\
         --front-video data/scene_lens0.mp4 \\
         --back-video data/scene_lens1.mp4 \\
         --intrinsics data/insta360_intrinsics.npz \\

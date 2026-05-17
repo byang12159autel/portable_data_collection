@@ -36,7 +36,7 @@ script. Default is 110° at 1280×1280, matching ``rectify.py``.
 
 Usage::
 
-    pixi run python -m pose_calibration.insta360.two_stage_calibrate \\
+    pixi run python -m pose_calibration.calibration.two_stage \\
         --front-video data/<recording>_lens0.mp4 \\
         --marker-config config/apriltag_board.yaml \\
         --output data/insta360_intrinsics.npz
@@ -54,7 +54,8 @@ import cv2
 import numpy as np
 import tyro
 
-from pose_calibration.detect_marker import (
+from pose_calibration.calibration.rectify import Rectifier, _pinhole_K
+from pose_calibration.markers.detect import (
     apriltag_grid_object_points,
     charuco_object_points,
     create_charuco_board,
@@ -63,7 +64,6 @@ from pose_calibration.detect_marker import (
     load_apriltag_grid_configs,
     load_charuco_board_configs,
 )
-from pose_calibration.insta360.rectify import Rectifier, _pinhole_K
 
 TargetType = Literal["charuco", "apriltag_grid"]
 

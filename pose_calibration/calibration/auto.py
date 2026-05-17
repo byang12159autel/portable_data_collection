@@ -15,14 +15,14 @@ Quality criteria (configurable via ``--target-rms`` / ``--target-focal-range``):
 
 Usage::
 
-    pixi run python -m pose_calibration.insta360.auto_calibrate \\
+    pixi run python -m pose_calibration.calibration.auto \\
         --insv data/insta360_calibration/VID_20260515_142743_00_002.insv \\
         --marker-config config/apriltag_board.yaml \\
         --output data/insta360_intrinsics.npz
 
 Or if you've already demuxed::
 
-    pixi run python -m pose_calibration.insta360.auto_calibrate \\
+    pixi run python -m pose_calibration.calibration.auto \\
         --front-video data/..._lens0.mp4 \\
         --back-video  data/..._lens1.mp4 \\
         --marker-config config/apriltag_board.yaml \\
@@ -41,7 +41,7 @@ import cv2
 import numpy as np
 import tyro
 
-from pose_calibration.insta360.calibrate import (
+from pose_calibration.calibration.fisheye import (
     LensCalibration,
     _calibrate_one_lens,
     _can_calibrate_single_view,
@@ -49,7 +49,7 @@ from pose_calibration.insta360.calibrate import (
     build_extractor,
     save_intrinsics,
 )
-from pose_calibration.insta360.convert import convert as convert_insv
+from pose_calibration.camera.convert import convert as convert_insv
 
 TargetType = Literal["charuco", "apriltag_grid"]
 

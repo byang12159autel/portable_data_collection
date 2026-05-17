@@ -14,10 +14,10 @@ from pathlib import Path
 import dataclasses
 from scipy.optimize import minimize_scalar, minimize
 
-from pose_calibration.detect_marker import (
+from pose_calibration.calibration.rectify import Rectifier
+from pose_calibration.markers.detect import (
     detect_aruco_markers, load_apriltag_grid_configs,
 )
-from pose_calibration.insta360.rectify import Rectifier
 
 VIDEO = 'data/insta360_calibration/lens0_combined.mp4'
 FRAME_STRIDE = 60  # collect ~370 frames

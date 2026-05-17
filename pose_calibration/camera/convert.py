@@ -7,7 +7,7 @@ frame. ``cv2.VideoCapture`` only reads stream 0, so we must demux the
 two tracks up-front with ffmpeg. The video tracks are standard H.264,
 so this is a stream-copy — no re-encode::
 
-    pixi run python -m pose_calibration.insta360.convert \\
+    pixi run python -m pose_calibration.camera.convert \\
         --input data/VID_20260515_120000_00_001.insv
 
 Output (next to the input, by default)::

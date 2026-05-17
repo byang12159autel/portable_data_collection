@@ -16,16 +16,16 @@ Target types:
 Usage::
 
     # AprilGrid (default)
-    python -m pose_calibration.replay_video \\
+    python -m pose_calibration.apps.replay_video \\
         --video data/iphone_charuco_test.mov \\
         --marker-configs config/apriltag_board.yaml
 
     # ArUco markers
-    python -m pose_calibration.replay_video --video <path> \\
+    python -m pose_calibration.apps.replay_video --video <path> \\
         --target-type aruco --marker-configs config/aruco_set.yaml
 
     # Detect both ArUco markers AND AprilGrid in the same frame
-    python -m pose_calibration.replay_video --video <path> \\
+    python -m pose_calibration.apps.replay_video --video <path> \\
         --target-type multi \\
         --marker-configs config/aruco_set.yaml config/apriltag_board.yaml
 """
@@ -44,7 +44,7 @@ import tyro
 import viser
 import yaml
 
-from pose_calibration.detect_marker import (
+from pose_calibration.markers.detect import (
     create_charuco_board,
     detect_aruco_markers,
     detect_charuco_corners,
@@ -273,7 +273,7 @@ def main(args: Args) -> None:
         if "fov_deg" in d.files and "pinhole_size" in d.files:
             # Flat fisheye npz: replicate Stage 1 (equidistant unwrap) so
             # detections happen in the same view the calibration was fit on.
-            from pose_calibration.insta360.rectify import Rectifier
+            from pose_calibration.calibration.rectify import Rectifier
             pinhole_size = (int(d["pinhole_size"][0]), int(d["pinhole_size"][1]))
             fov_deg = float(d["fov_deg"])
             fw = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))

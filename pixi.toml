@@ -11,7 +11,7 @@ build = { cmd = "colcon build --symlink-install", cwd = "ros2_ws" }
 
 # Live capture: subscribes to /dual_fisheye/image and serves a viser
 # preview at http://localhost:8085.
-capture = "python -m pose_calibration.capture_node"
+capture = "python -m pose_calibration.apps.capture_node"
 
 [dependencies]
 python = "*"

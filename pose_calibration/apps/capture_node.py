@@ -13,11 +13,11 @@ apriltag_grid | multi.
 Source your ROS2 environment first, then run::
 
     # AprilGrid (default)
-    python -m pose_calibration.capture_node \\
+    python -m pose_calibration.apps.capture_node \\
         --marker-configs config/apriltag_board.yaml
 
     # Combine ArUco box markers + AprilGrid in one pass
-    python -m pose_calibration.capture_node --target-type multi \\
+    python -m pose_calibration.apps.capture_node --target-type multi \\
         --marker-configs config/aruco_set.yaml config/apriltag_board.yaml
 """
 
@@ -40,7 +40,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo, Image
 
-from pose_calibration.detect_marker import (
+from pose_calibration.markers.detect import (
     create_charuco_board,
     detect_aruco_markers,
     detect_charuco_corners,

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Camera-pose history for independent ArUco markers, in viser.
 
-Companion to :mod:`pose_calibration.insta360.pose_history` (which expects a
+Companion to :mod:`pose_calibration.pose.known_board` (which expects a
 known AprilGrid layout). Here the marker YAML only specifies per-marker
 ``id``/``size``/``dictionary`` — the inter-marker layout is *learned* from
 the recording itself.
@@ -32,7 +32,7 @@ Viser scene mirrors ``pose_history.py``:
 
 Usage::
 
-    pixi run python -m pose_calibration.insta360.pose_aruco \\
+    pixi run python -m pose_calibration.pose.learned_layout \\
         --video data/aruco_test/VID_..._lens0.mp4 \\
         --intrinsics data/insta360_calibration/lens0_combined_subpixel_best.npz \\
         --marker-configs config/aruco_bench.yaml
@@ -50,13 +50,13 @@ import numpy as np
 import tyro
 import viser
 
-from pose_calibration.detect_marker import (
+from pose_calibration.calibration.rectify import Rectifier
+from pose_calibration.markers.detect import (
     MarkerConfig,
     detect_aruco_markers,
     load_marker_configs,
     marker_object_points,
 )
-from pose_calibration.insta360.rectify import Rectifier
 
 
 @dataclasses.dataclass

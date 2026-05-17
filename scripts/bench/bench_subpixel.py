@@ -38,11 +38,11 @@ from typing import Callable, Iterator
 import cv2
 import numpy as np
 
-from pose_calibration.detect_marker import (
+from pose_calibration.calibration.rectify import Rectifier
+from pose_calibration.markers.detect import (
     apriltag_grid_object_points,
     load_apriltag_grid_configs,
 )
-from pose_calibration.insta360.rectify import Rectifier
 
 VIDEO = Path("data/insta360_calibration/lens0_combined.mp4")
 MARKER_CONFIG = Path("config/apriltag_board.yaml")

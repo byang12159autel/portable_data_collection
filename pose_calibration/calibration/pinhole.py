@@ -13,7 +13,7 @@ without the fisheye/pinhole_rough entries that don't apply here.
 
 Usage::
 
-    pixi run python -m pose_calibration.insta360.pinhole_calibrate \\
+    pixi run python -m pose_calibration.calibration.pinhole \\
         --video data/insta360_calibration/app_export_singlelens.mp4 \\
         --marker-config config/apriltag_board.yaml \\
         --output data/insta360_calibration/pinhole_intrinsics.npz
@@ -30,7 +30,7 @@ import cv2
 import numpy as np
 import tyro
 
-from pose_calibration.detect_marker import (
+from pose_calibration.markers.detect import (
     apriltag_grid_object_points,
     charuco_object_points,
     create_charuco_board,

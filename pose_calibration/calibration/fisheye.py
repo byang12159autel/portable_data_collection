@@ -10,14 +10,14 @@ calibrate one lens at a time across separate recordings.
 Usage::
 
     # Calibrate both lenses from two per-lens recordings
-    pixi run python -m pose_calibration.insta360.calibrate \\
+    pixi run python -m pose_calibration.calibration.fisheye \\
         --front-video data/calib_lens0.mp4 \\
         --back-video data/calib_lens1.mp4 \\
         --marker-config config/apriltag_board.yaml \\
         --output data/insta360_intrinsics.npz
 
     # Calibrate just the front lens (re-run later for back)
-    pixi run python -m pose_calibration.insta360.calibrate \\
+    pixi run python -m pose_calibration.calibration.fisheye \\
         --front-video data/front_calib.mp4 \\
         --marker-config config/apriltag_board.yaml \\
         --output data/insta360_intrinsics.npz
@@ -42,7 +42,7 @@ import cv2
 import numpy as np
 import tyro
 
-from pose_calibration.detect_marker import (
+from pose_calibration.markers.detect import (
     apriltag_grid_object_points,
     charuco_object_points,
     create_charuco_board,
