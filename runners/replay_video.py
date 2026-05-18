@@ -16,16 +16,16 @@ Target types:
 Usage::
 
     # AprilGrid (default)
-    python -m pose_calibration.apps.replay_video \\
+    python -m runners.replay_video \\
         --video data/iphone_charuco_test.mov \\
         --marker-configs config/apriltag_board.yaml
 
     # ArUco markers
-    python -m pose_calibration.apps.replay_video --video <path> \\
+    python -m runners.replay_video --video <path> \\
         --target-type aruco --marker-configs config/aruco_set.yaml
 
     # Detect both ArUco markers AND AprilGrid in the same frame
-    python -m pose_calibration.apps.replay_video --video <path> \\
+    python -m runners.replay_video --video <path> \\
         --target-type multi \\
         --marker-configs config/aruco_set.yaml config/apriltag_board.yaml
 """

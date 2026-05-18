@@ -22,7 +22,7 @@ changing one constructor argument:
 
 Usage::
 
-    pixi run python -m pose_calibration.apps.replay_insta \\
+    pixi run python -m runners.replay_insta \\
         --front-video data/scene_lens0.mp4 \\
         --back-video data/scene_lens1.mp4 \\
         --intrinsics data/insta360_intrinsics.npz \\
@@ -43,7 +43,7 @@ import numpy as np
 import tyro
 import viser
 
-from pose_calibration.apps.replay_video import _build_detector_fns
+from runners.replay_video import _build_detector_fns
 from core.rectify import IntrinsicsBundle
 from core.pipeline import PreviewPipeline
 

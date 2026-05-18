@@ -1,7 +1,7 @@
 """Camera-pose estimation from per-frame detections.
 
 Each module is a ``PoseEstimator`` implementation (per the protocol in
-:mod:`pose_calibration.pipeline`):
+:mod:`core.pipeline`):
 
   - ``known_board``    -- AprilGrid with a known layout from config;
                           pooled PnP across all detected tags per frame
