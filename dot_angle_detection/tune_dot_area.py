@@ -40,13 +40,13 @@ from dot_angle_detection.detect_dots import (
     detect_black_circular_dots,
     detect_white_circular_dots,
 )
+from core.geometry import homography_from_aruco_pose
 from dot_angle_detection.homography_transform import (
     Lens0Rectifier,
     _detect_marker,
     _load_marker,
     _marker_object_points,
     _resolve_lens0_mp4,
-    homography_from_aruco_pose,
 )
 
 

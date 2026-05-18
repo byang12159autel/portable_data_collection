@@ -14,8 +14,8 @@ from pathlib import Path
 import dataclasses
 from scipy.optimize import minimize_scalar, minimize
 
-from pose_calibration.calibration.rectify import Rectifier
-from pose_calibration.markers.detect import (
+from core.rectify import Rectifier
+from core.markers import (
     detect_aruco_markers, load_apriltag_grid_configs,
 )
 

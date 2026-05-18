@@ -50,8 +50,8 @@ import numpy as np
 import tyro
 import viser
 
-from pose_calibration.calibration.rectify import Rectifier
-from pose_calibration.markers.detect import (
+from core.rectify import Rectifier
+from core.markers import (
     MarkerConfig,
     detect_aruco_markers,
     load_marker_configs,

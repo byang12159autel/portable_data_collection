@@ -49,7 +49,7 @@ from pose_calibration.calibration.fisheye import (
     build_extractor,
     save_intrinsics,
 )
-from pose_calibration.camera.convert import convert as convert_insv
+from core.camera.convert import convert as convert_insv
 
 TargetType = Literal["charuco", "apriltag_grid"]
 

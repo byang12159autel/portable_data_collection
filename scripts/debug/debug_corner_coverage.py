@@ -23,7 +23,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from pose_calibration.markers.detect import (
+from core.markers import (
     detect_aruco_markers,
     load_apriltag_grid_configs,
 )

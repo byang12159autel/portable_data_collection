@@ -30,88 +30,22 @@ from __future__ import annotations
 
 import dataclasses
 import math
-import sys
 import time
 from pathlib import Path  # noqa: TC003 — tyro needs Path at runtime
 
 import cv2
 import numpy as np
 
-# --------------------------------------------------------------------------
-# Pure-math helpers (also imported by callers).
-# --------------------------------------------------------------------------
-
-
-def homography_from_aruco_pose(K, rvec, tvec, z_offset_m: float = 0.0):
-    """Build plane-to-image and image-to-plane homographies from an ArUco pose.
-
-    OpenCV ArUco pose convention:
-        P_camera = R * P_marker + t
-
-    Target plane (parallel to the marker face, optionally offset along
-    the marker's local Z):
-        Z_marker = z_offset_m
-
-    Homography:
-        s [u, v, 1]^T = K [r1 r2 (z_offset_m * r3 + t)] [X, Y, 1]^T
-
-    A non-zero ``z_offset_m`` lifts (or lowers) the homography to a
-    plane parallel to the marker — useful when the features of
-    interest (here, the chopstick reference dots) don't lie exactly on
-    the marker face. Pass the physical offset in metres; positive is
-    the marker's own +Z (out of the marker face), negative is into it.
-
-    Args:
-        K:    3x3 camera intrinsic matrix
-        rvec: 3x1 rotation vector from ArUco pose estimation
-        tvec: 3x1 translation vector from ArUco pose estimation
-        z_offset_m: target-plane offset along marker +Z (metres)
-
-    Returns:
-        H_plane_to_img: 3x3 homography from target-plane coords (m) to pixels
-        H_img_to_plane: 3x3 homography from pixels to target-plane coords (m)
-    """
-
-    R, _ = cv2.Rodrigues(rvec)
-    t = np.asarray(tvec, dtype=np.float64).reshape(3, 1)
-
-    r1 = R[:, 0:1]
-    r2 = R[:, 1:2]
-    r3 = R[:, 2:3]
-
-    t_shifted = t + z_offset_m * r3
-    H_plane_to_img = K @ np.hstack([r1, r2, t_shifted])
-    H_img_to_plane = np.linalg.inv(H_plane_to_img)
-
-    return H_plane_to_img, H_img_to_plane
-
-
-def apply_homography(H, point_uv):
-    """Apply a 3x3 homography to a single 2D point.
-
-    Args:
-        H: 3x3 homography
-        point_uv: 2D point [u, v]
-
-    Returns:
-        Transformed 2D point [x, y].
-    """
-
-    u, v = point_uv
-    p = np.array([u, v, 1.0], dtype=np.float64)
-
-    q = H @ p
-    q = q / q[2]
-
-    return q[:2]
-
-
-def apply_homography_batch(H, points):
-    """Vectorized ``apply_homography`` over an (N, 2) array of points."""
-    pts = np.asarray(points, dtype=np.float64).reshape(-1, 2)
-    h = np.hstack([pts, np.ones((pts.shape[0], 1))])
-    q = (H @ h.T).T
-    return q[:, :2] / q[:, 2:3]
+from core.camera.convert import convert as _insv_demux
+from core.geometry import homography_from_aruco_pose
+from core.markers import load_marker_configs, resolve_aruco_dict
+from core.viz.birdseye import birdseye, embed_inset
+from core.viz.overlays import (
+    draw_axes_via_homography,
+    draw_detection,
+    draw_plane_grid,
+    draw_z_axis,
+)
 
 
 # --------------------------------------------------------------------------
@@ -228,126 +162,6 @@ def _detect_marker(frame_bgr: np.ndarray, dict_id: int, target_id: int):
 
 
 # --------------------------------------------------------------------------
-# Drawing helpers.
-# --------------------------------------------------------------------------
-
-
-def _draw_detection(img: np.ndarray, corners: np.ndarray, tag_id: int) -> None:
-    pts = corners.astype(np.int32)
-    cv2.polylines(img, [pts], True, (0, 255, 0), 2)
-    # Corner labels (TL, TR, BR, BL).
-    for label, (x, y) in zip(("TL", "TR", "BR", "BL"), pts):
-        cv2.circle(img, (int(x), int(y)), 4, (0, 255, 255), -1)
-        cv2.putText(img, label, (int(x) + 6, int(y) - 6),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1, cv2.LINE_AA)
-    cx, cy = pts.mean(axis=0).astype(int)
-    cv2.putText(img, f"id={tag_id}", (cx - 20, cy + 4),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2, cv2.LINE_AA)
-
-
-def _draw_axes_via_homography(img: np.ndarray, H_plane_to_img: np.ndarray,
-                              length_m: float) -> None:
-    """Draw the marker's XYZ axes by warping plane points through H.
-
-    Note: Z is approximated as a small out-of-plane segment via the marker
-    pose; for the in-plane axes we rely solely on the homography (no
-    cv2.projectPoints needed).
-    """
-    origin = apply_homography(H_plane_to_img, (0.0, 0.0))
-    x_end = apply_homography(H_plane_to_img, (length_m, 0.0))
-    y_end = apply_homography(H_plane_to_img, (0.0, length_m))
-    o = tuple(int(v) for v in origin)
-    cv2.arrowedLine(img, o, tuple(int(v) for v in x_end), (0, 0, 255), 3,
-                    tipLength=0.15)  # X red
-    cv2.arrowedLine(img, o, tuple(int(v) for v in y_end), (0, 255, 0), 3,
-                    tipLength=0.15)  # Y green
-
-
-def _draw_z_axis(img: np.ndarray, K: np.ndarray, rvec: np.ndarray,
-                 tvec: np.ndarray, length_m: float) -> None:
-    """Z axis needs the full 3D projection; draw it on top of the homography axes."""
-    pts_3d = np.array(
-        [[0.0, 0.0, 0.0], [0.0, 0.0, length_m]], dtype=np.float32
-    )
-    pts_2d, _ = cv2.projectPoints(pts_3d, rvec, tvec, K, np.zeros(5))
-    p0 = tuple(int(v) for v in pts_2d[0, 0])
-    p1 = tuple(int(v) for v in pts_2d[1, 0])
-    cv2.arrowedLine(img, p0, p1, (255, 0, 0), 3, tipLength=0.15)  # Z blue
-
-
-def _draw_plane_grid(img: np.ndarray, H_plane_to_img: np.ndarray,
-                     extent_m: float, step_m: float) -> None:
-    """Draw a square grid on the marker plane via the homography."""
-    h, w = img.shape[:2]
-    ticks = np.arange(-extent_m, extent_m + step_m * 0.5, step_m)
-    # Horizontal lines (constant Y).
-    for y in ticks:
-        pts = apply_homography_batch(
-            H_plane_to_img, np.column_stack([ticks, np.full_like(ticks, y)])
-        ).astype(np.int32)
-        for (x0, y0), (x1, y1) in zip(pts[:-1], pts[1:]):
-            if 0 <= x0 < w and 0 <= y0 < h and 0 <= x1 < w and 0 <= y1 < h:
-                cv2.line(img, (x0, y0), (x1, y1), (255, 200, 80), 1, cv2.LINE_AA)
-    # Vertical lines (constant X).
-    for x in ticks:
-        pts = apply_homography_batch(
-            H_plane_to_img, np.column_stack([np.full_like(ticks, x), ticks])
-        ).astype(np.int32)
-        for (x0, y0), (x1, y1) in zip(pts[:-1], pts[1:]):
-            if 0 <= x0 < w and 0 <= y0 < h and 0 <= x1 < w and 0 <= y1 < h:
-                cv2.line(img, (x0, y0), (x1, y1), (255, 200, 80), 1, cv2.LINE_AA)
-
-
-def _birdseye(img: np.ndarray, H_plane_to_img: np.ndarray,
-              extent_m: float, width_px: int,
-              height_px: int | None = None) -> np.ndarray:
-    """Warp the image into a top-down view of the marker plane.
-
-    The plane origin maps to the center of the output, +X right, +Y up.
-    ``extent_m`` is the *x* half-extent; the y half-extent is derived
-    from ``height_px`` so the pixels-per-meter scale matches on both
-    axes (no aspect-ratio distortion).
-    """
-    if height_px is None:
-        height_px = width_px
-    s = width_px / (2.0 * extent_m)            # pixels per metre
-    extent_y_m = height_px / (2.0 * s)         # half-extent on Y
-    H_plane_to_out = np.array(
-        [[s, 0.0, width_px / 2.0],
-         [0.0, -s, height_px / 2.0],
-         [0.0, 0.0, 1.0]],
-        dtype=np.float64,
-    )
-    H_img_to_out = H_plane_to_out @ np.linalg.inv(H_plane_to_img)
-    out = cv2.warpPerspective(
-        img, H_img_to_out, (width_px, height_px),
-        flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
-    )
-    cx, cy = width_px // 2, height_px // 2
-    cv2.line(out, (0, cy), (width_px, cy), (255, 200, 80), 1)
-    cv2.line(out, (cx, 0), (cx, height_px), (255, 200, 80), 1)
-    cv2.arrowedLine(out, (cx, cy), (cx + int(s * extent_m * 0.5), cy),
-                    (0, 0, 255), 2, tipLength=0.15)
-    cv2.arrowedLine(out, (cx, cy), (cx, cy - int(s * extent_y_m * 0.5)),
-                    (0, 255, 0), 2, tipLength=0.15)
-    cv2.putText(out,
-                f"birds-eye  x+-{extent_m * 1000:.0f}mm  y+-{extent_y_m * 1000:.0f}mm",
-                (8, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
-                (255, 255, 255), 1, cv2.LINE_AA)
-    return out
-
-
-def _embed_inset(canvas: np.ndarray, inset: np.ndarray, margin: int = 12) -> None:
-    h, w = canvas.shape[:2]
-    ih, iw = inset.shape[:2]
-    y0 = h - ih - margin
-    x0 = w - iw - margin
-    canvas[y0:y0 + ih, x0:x0 + iw] = inset
-    cv2.rectangle(canvas, (x0 - 1, y0 - 1), (x0 + iw, y0 + ih),
-                  (255, 255, 255), 1)
-
-
-# --------------------------------------------------------------------------
 # Top-level pipeline.
 # --------------------------------------------------------------------------
 
@@ -413,21 +227,13 @@ def _resolve_lens0_mp4(video: Path, force: bool) -> Path:
     if lens0.exists() and not force:
         print(f"reusing existing {lens0}")
         return lens0
-    # Defer the import so this module stays importable when pose_calibration
-    # isn't on sys.path (tests, downstream consumers).
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from pose_calibration.camera.convert import convert
     lens1 = video.with_name(video.stem + "_lens1.mp4")
     print(f"demuxing {video} -> {lens0.name}, {lens1.name}")
-    convert(video, lens0, lens1, force=force)
+    _insv_demux(video, lens0, lens1, force=force)
     return lens0
 
 
 def _load_marker(marker_config: Path, marker_name: str | None):
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from pose_calibration.markers.detect import (
-        load_marker_configs, resolve_aruco_dict,
-    )
     markers = load_marker_configs(marker_config)
     if not markers:
         raise SystemExit(f"no markers defined in {marker_config}")
@@ -522,15 +328,15 @@ def main(args: Args) -> None:
                 if ok_pnp:
                     pose_ok = True
                     H_plane_to_img, _ = homography_from_aruco_pose(K, rvec, tvec)
-                    _draw_plane_grid(canvas, H_plane_to_img, grid_extent, grid_step)
-                    _draw_detection(canvas, corners, marker_cfg.id)
-                    _draw_axes_via_homography(canvas, H_plane_to_img, axes_len)
-                    _draw_z_axis(canvas, K, rvec, tvec, axes_len)
-                    inset = _birdseye(
+                    draw_plane_grid(canvas, H_plane_to_img, grid_extent, grid_step)
+                    draw_detection(canvas, corners, marker_cfg.id)
+                    draw_axes_via_homography(canvas, H_plane_to_img, axes_len)
+                    draw_z_axis(canvas, K, rvec, tvec, axes_len)
+                    inset = birdseye(
                         undistorted, H_plane_to_img, birds_extent,
                         args.birdseye_px, args.birdseye_height_px,
                     )
-                    _embed_inset(canvas, inset)
+                    embed_inset(canvas, inset)
                     dist = float(np.linalg.norm(tvec))
                     cv2.putText(
                         canvas, f"frame {n_done}  d={dist*1000:.1f} mm",

@@ -38,8 +38,8 @@ import numpy as np
 import tyro
 import viser
 
-from pose_calibration.calibration.rectify import Rectifier
-from pose_calibration.markers.detect import (
+from core.rectify import Rectifier
+from core.markers import (
     apriltag_grid_object_points,
     load_apriltag_grid_configs,
 )

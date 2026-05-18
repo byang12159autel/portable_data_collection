@@ -44,8 +44,8 @@ import tyro
 import viser
 
 from pose_calibration.apps.replay_video import _build_detector_fns
-from pose_calibration.calibration.rectify import IntrinsicsBundle
-from pose_calibration.pipeline import PreviewPipeline
+from core.rectify import IntrinsicsBundle
+from core.pipeline import PreviewPipeline
 
 TargetType = Literal["aruco", "charuco", "apriltag", "apriltag_grid", "multi"]
 

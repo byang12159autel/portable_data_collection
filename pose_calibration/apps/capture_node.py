@@ -40,7 +40,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo, Image
 
-from pose_calibration.markers.detect import (
+from core.markers import (
     create_charuco_board,
     detect_aruco_markers,
     detect_charuco_corners,

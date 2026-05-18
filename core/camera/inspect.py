@@ -6,7 +6,7 @@ frame of each video stream as a PNG so you can eyeball the layout — most
 useful for confirming which stream is which lens before running
 calibration::
 
-    pixi run python -m pose_calibration.camera.inspect \\
+    pixi run python -m core.camera.inspect \\
         --input data/VID_20260515_120000_00_001.insv
 
 By default the PNGs land next to the input as

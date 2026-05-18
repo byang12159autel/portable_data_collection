@@ -1,14 +1,14 @@
 """Stage protocols + Pipeline composition for the marker-pose toolkit.
 
 Five swappable stages, each declared as a ``Protocol``. Implementations
-live in the per-stage subpackages:
+live in their respective packages:
 
-    FrameSource      -- pose_calibration.camera
-    Calibrator       -- pose_calibration.calibration
-    Rectifier        -- pose_calibration.calibration
-    Detector         -- pose_calibration.markers   (data-producing)
-    DrawingDetector  -- pose_calibration.markers   (visualization)
-    PoseEstimator    -- pose_calibration.pose
+    FrameSource      -- core.camera
+    Calibrator       -- calibration
+    Rectifier        -- core.rectify
+    Detector         -- core.markers          (data-producing)
+    DrawingDetector  -- core.markers          (visualization)
+    PoseEstimator    -- pose_6d
 
 Protocols are structural: any class whose methods match qualifies, no
 inheritance required. To plug in a new calibration method, write a class
@@ -29,7 +29,7 @@ that produce numerical output (poses, corners, trajectories)::
     rectified, detections, pose = pipeline.process(frame)
 
 **Preview pipeline** (rectify -> draw) — for visualization apps where
-detection and overlay are folded together by ``markers.detect``'s
+detection and overlay are folded together by ``core.markers``'s
 ``_build_detector_fns``::
 
     pipeline = PreviewPipeline(

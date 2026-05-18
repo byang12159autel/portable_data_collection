@@ -46,6 +46,18 @@ from pathlib import Path  # noqa: TC003 — tyro needs Path at runtime
 import cv2
 import numpy as np
 
+from core.geometry import (
+    apply_homography,
+    apply_homography_batch,
+    homography_from_aruco_pose,
+)
+from core.viz.birdseye import embed_inset
+from core.viz.overlays import (
+    draw_axes_via_homography,
+    draw_detection,
+    draw_plane_grid,
+    draw_z_axis,
+)
 from dot_angle_detection.detect_dots import (
     detect_black_circular_dots,
     detect_white_circular_dots,
@@ -53,17 +65,9 @@ from dot_angle_detection.detect_dots import (
 from dot_angle_detection.homography_transform import (
     Lens0Rectifier,
     _detect_marker,
-    _draw_axes_via_homography,
-    _draw_detection,
-    _draw_plane_grid,
-    _draw_z_axis,
-    _embed_inset,
     _load_marker,
     _marker_object_points,
     _resolve_lens0_mp4,
-    apply_homography,
-    apply_homography_batch,
-    homography_from_aruco_pose,
 )
 
 
@@ -547,10 +551,10 @@ def main(args: Args) -> None:
                     H_plane_to_img, H_img_to_plane = homography_from_aruco_pose(
                         K, rvec, tvec, z_offset_m=args.dot_plane_z_offset_m,
                     )
-                    _draw_plane_grid(canvas, H_plane_to_img, grid_extent, grid_step)
-                    _draw_detection(canvas, corners, marker_cfg.id)
-                    _draw_axes_via_homography(canvas, H_plane_to_img, axes_len)
-                    _draw_z_axis(canvas, K, rvec, tvec, axes_len)
+                    draw_plane_grid(canvas, H_plane_to_img, grid_extent, grid_step)
+                    draw_detection(canvas, corners, marker_cfg.id)
+                    draw_axes_via_homography(canvas, H_plane_to_img, axes_len)
+                    draw_z_axis(canvas, K, rvec, tvec, axes_len)
                     n_pose += 1
                     status_lines.append(
                         f"d={np.linalg.norm(tvec)*1000:.1f}mm"
@@ -650,7 +654,7 @@ def main(args: Args) -> None:
                         if black_centers_plane is not None else None
                     ),
                 )
-                _embed_inset(canvas, inset)
+                embed_inset(canvas, inset)
 
             # Header text.
             header_color = (

@@ -16,7 +16,7 @@ from pathlib import Path
 
 import cv2
 
-from pose_calibration.markers.detect import (
+from core.markers import (
     detect_aruco_markers,
     load_apriltag_grid_configs,
 )

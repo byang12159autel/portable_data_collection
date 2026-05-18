@@ -54,8 +54,8 @@ import cv2
 import numpy as np
 import tyro
 
-from pose_calibration.calibration.rectify import Rectifier, _pinhole_K
-from pose_calibration.markers.detect import (
+from core.rectify import Rectifier, _pinhole_K
+from core.markers import (
     apriltag_grid_object_points,
     charuco_object_points,
     create_charuco_board,

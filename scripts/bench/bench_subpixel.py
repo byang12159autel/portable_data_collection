@@ -38,8 +38,8 @@ from typing import Callable, Iterator
 import cv2
 import numpy as np
 
-from pose_calibration.calibration.rectify import Rectifier
-from pose_calibration.markers.detect import (
+from core.rectify import Rectifier
+from core.markers import (
     apriltag_grid_object_points,
     load_apriltag_grid_configs,
 )

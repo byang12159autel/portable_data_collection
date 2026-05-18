@@ -1,7 +1,7 @@
 import os
 import cv2
 
-from pose_calibration.camera.split import split_dual_fisheye
+from core.camera.split import split_dual_fisheye
 
 path = "data/VID_20260515_121341_00_001.insv"
 cap = cv2.VideoCapture(path)

@@ -44,7 +44,7 @@ import tyro
 import viser
 import yaml
 
-from pose_calibration.markers.detect import (
+from core.markers import (
     create_charuco_board,
     detect_aruco_markers,
     detect_charuco_corners,
@@ -273,7 +273,7 @@ def main(args: Args) -> None:
         if "fov_deg" in d.files and "pinhole_size" in d.files:
             # Flat fisheye npz: replicate Stage 1 (equidistant unwrap) so
             # detections happen in the same view the calibration was fit on.
-            from pose_calibration.calibration.rectify import Rectifier
+            from core.rectify import Rectifier
             pinhole_size = (int(d["pinhole_size"][0]), int(d["pinhole_size"][1]))
             fov_deg = float(d["fov_deg"])
             fw = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
