@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Interactive area-threshold picker for ``detect_black_circular_dots``.
 
-Pulls one frame from the source video, undistorts it via ``Lens0Rectifier``
+Pulls one frame from the source video, undistorts it via ``Rectifier.from_subpixel_npz``
 (same pipeline as ``hinge_pipeline.py``), and serves a viser preview at
 ``http://localhost:<port>`` with:
 
@@ -20,7 +20,7 @@ chopstick dots and the red is just bigger; then plug those values into
 
 Usage::
 
-    pixi run python -m dot_angle_detection.tune_dot_area \\
+    pixi run python -m gripper.tune \\
         --video data/aruco_test/VID_20260517_192400_00_009.insv \\
         --intrinsics data/insta360_calibration/lens0_combined_subpixel_best.npz \\
         --frame 365
@@ -36,17 +36,17 @@ from pathlib import Path  # noqa: TC003 — tyro needs Path at runtime
 import cv2
 import numpy as np
 
-from dot_angle_detection.detect_dots import (
+from core.camera.convert import resolve_lens0_mp4
+from core.geometry import homography_from_aruco_pose
+from core.markers import (
+    detect_aruco_markers,
+    load_named_marker,
+    marker_object_points,
+)
+from core.rectify import Rectifier
+from gripper.dots import (
     detect_black_circular_dots,
     detect_white_circular_dots,
-)
-from core.geometry import homography_from_aruco_pose
-from dot_angle_detection.homography_transform import (
-    Lens0Rectifier,
-    _detect_marker,
-    _load_marker,
-    _marker_object_points,
-    _resolve_lens0_mp4,
 )
 
 
@@ -126,7 +126,7 @@ def _format_detection_table(dets: list[dict], limit: int = 8) -> str:
 def main(args: Args) -> None:
     # --- Source frame -------------------------------------------------------
     if args.video.suffix.lower() == ".insv":
-        lens0_mp4 = _resolve_lens0_mp4(args.video, args.force_demux)
+        lens0_mp4 = resolve_lens0_mp4(args.video, args.force_demux)
     else:
         lens0_mp4 = args.video
 
@@ -144,9 +144,9 @@ def main(args: Args) -> None:
         raise SystemExit(f"could not read frame {target_idx} from {lens0_mp4}")
 
     if args.intrinsics is not None:
-        rect = Lens0Rectifier.from_npz(args.intrinsics, (src_w, src_h))
+        rect = Rectifier.from_subpixel_npz(args.intrinsics, (src_w, src_h))
         undistorted = rect.apply(bgr)
-        K = rect.K
+        K = rect.K_pinhole
     else:
         undistorted = bgr
         K = None
@@ -156,15 +156,21 @@ def main(args: Args) -> None:
             raise SystemExit("--detect-in-plane requires --marker-config")
         if K is None:
             raise SystemExit("--detect-in-plane requires --intrinsics")
-        marker_cfg, dict_id = _load_marker(args.marker_config, args.marker_name)
-        corners = _detect_marker(undistorted, dict_id, marker_cfg.id)
+        marker_cfg, dict_id = load_named_marker(args.marker_config, args.marker_name)
+        corners_list, _ids = detect_aruco_markers(
+            undistorted, marker_dict=dict_id, allowed_ids={marker_cfg.id},
+        )
+        corners = (
+            corners_list[0].reshape(4, 2).astype(np.float32)
+            if corners_list else None
+        )
         if corners is None:
             raise SystemExit(
                 f"marker '{marker_cfg.id}' not found in frame {target_idx}; "
                 "pick a different --frame or switch to image-space tuning"
             )
         ok_pnp, rvec, tvec = cv2.solvePnP(
-            _marker_object_points(marker_cfg.size), corners,
+            marker_object_points(marker_cfg.size), corners,
             K, np.zeros(5, dtype=np.float64),
             flags=cv2.SOLVEPNP_IPPE_SQUARE,
         )

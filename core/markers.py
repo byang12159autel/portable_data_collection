@@ -94,6 +94,30 @@ def load_charuco_board_configs(path: Path) -> dict[str, CharucoBoardConfig]:
     return {name: CharucoBoardConfig(**fields) for name, fields in boards.items()}
 
 
+def load_named_marker(
+    path: Path, name: str | None = None,
+) -> tuple[MarkerConfig, int]:
+    """Load one marker by name from a YAML's ``markers:`` section.
+
+    With ``name=None`` returns the first entry (handy when the YAML only
+    has one). Returns ``(MarkerConfig, cv2_dict_id)``; raises
+    ``SystemExit`` if the YAML has no markers or the named entry is
+    missing.
+    """
+    markers = load_marker_configs(path)
+    if not markers:
+        raise SystemExit(f"no markers defined in {path}")
+    if name is None:
+        name, cfg = next(iter(markers.items()))
+    else:
+        if name not in markers:
+            raise SystemExit(
+                f"marker '{name}' not in {path}; available: {list(markers)}"
+            )
+        cfg = markers[name]
+    return cfg, cfg.cv2_dictionary
+
+
 def detect_aruco_markers(
     img: np.ndarray,
     marker_dict: int = cv2.aruco.DICT_4X4_50,

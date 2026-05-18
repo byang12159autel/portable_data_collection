@@ -3,9 +3,10 @@
 
 Pipeline per frame:
 
-1. **Undistort.** ``Lens0Rectifier`` runs the Stage-1 equidistant unwrap
-   + Stage-2 ``cv2.undistort`` from the lens0 calibration npz. Output is
-   a clean pinhole frame with intrinsics ``K`` and zero distortion.
+1. **Undistort.** ``core.rectify.Rectifier.from_subpixel_npz`` composes
+   the Stage-1 equidistant unwrap + Stage-2 ``cv2.undistort`` from the
+   lens0 calibration npz into a single remap LUT. Output is a clean
+   pinhole frame with intrinsics ``K`` and zero distortion.
 2. **ArUco pose.** Detect the marker from ``--marker-config`` and run
    ``cv2.solvePnP`` (IPPE_SQUARE). The recovered ``rvec, tvec`` feeds
    ``homography_from_aruco_pose`` to build the plane <-> image
@@ -31,7 +32,7 @@ Outputs:
 
 Usage::
 
-    pixi run python -m dot_angle_detection.hinge_pipeline \\
+    pixi run python -m gripper.pipeline \\
         --video data/aruco_test/VID_20260517_192400_00_009.insv \\
         --intrinsics data/insta360_calibration/lens0_combined_subpixel_best.npz \\
         --marker-config config/chopsticks-v1.yaml
@@ -46,11 +47,18 @@ from pathlib import Path  # noqa: TC003 — tyro needs Path at runtime
 import cv2
 import numpy as np
 
+from core.camera.convert import resolve_lens0_mp4
 from core.geometry import (
     apply_homography,
     apply_homography_batch,
     homography_from_aruco_pose,
 )
+from core.markers import (
+    detect_aruco_markers,
+    load_named_marker,
+    marker_object_points,
+)
+from core.rectify import Rectifier
 from core.viz.birdseye import embed_inset
 from core.viz.overlays import (
     draw_axes_via_homography,
@@ -58,16 +66,9 @@ from core.viz.overlays import (
     draw_plane_grid,
     draw_z_axis,
 )
-from dot_angle_detection.detect_dots import (
+from gripper.dots import (
     detect_black_circular_dots,
     detect_white_circular_dots,
-)
-from dot_angle_detection.homography_transform import (
-    Lens0Rectifier,
-    _detect_marker,
-    _load_marker,
-    _marker_object_points,
-    _resolve_lens0_mp4,
 )
 
 
@@ -468,8 +469,12 @@ class Args:
 
 
 def main(args: Args) -> None:
-    lens0_mp4 = _resolve_lens0_mp4(args.video, args.force_demux)
-    marker_cfg, dict_id = _load_marker(args.marker_config, args.marker_name)
+    lens0_mp4 = resolve_lens0_mp4(args.video, args.force_demux)
+    marker_cfg, dict_id = load_named_marker(args.marker_config, args.marker_name)
+    print(
+        f"marker '{args.marker_name or 'default'}': id={marker_cfg.id} "
+        f"size={marker_cfg.size} m dict={marker_cfg.dictionary}"
+    )
 
     cap = cv2.VideoCapture(str(lens0_mp4))
     if not cap.isOpened():
@@ -480,9 +485,9 @@ def main(args: Args) -> None:
     n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     print(f"video: {lens0_mp4} {src_w}x{src_h} @ {src_fps:.1f} FPS, {n_frames} frames")
 
-    rect = Lens0Rectifier.from_npz(args.intrinsics, (src_w, src_h))
-    out_w, out_h = rect.pinhole_size
-    print(f"undistort -> {out_w}x{out_h} pinhole (K fx={rect.K[0,0]:.1f})")
+    rect = Rectifier.from_subpixel_npz(args.intrinsics, (src_w, src_h))
+    out_w, out_h = rect.out_size
+    print(f"undistort -> {out_w}x{out_h} pinhole (K fx={rect.K_pinhole[0,0]:.1f})")
 
     out_path = args.output or args.video.with_name(args.video.stem + "_hinge.mp4")
     writer = cv2.VideoWriter(
@@ -516,9 +521,9 @@ def main(args: Args) -> None:
             print(f"(viser disabled: {e})")
             server = None
 
-    K = rect.K
+    K = rect.K_pinhole
     distC = np.zeros(5, dtype=np.float64)
-    obj_pts = _marker_object_points(marker_cfg.size)
+    obj_pts = marker_object_points(marker_cfg.size)
     axes_len = marker_cfg.size * args.axes_length_factor
     grid_extent = marker_cfg.size * args.grid_extent_factor
     grid_step = marker_cfg.size * args.grid_step_factor
@@ -539,7 +544,13 @@ def main(args: Args) -> None:
             status_lines: list[str] = []
 
             # --- 1. ArUco pose + homography ---------------------------------
-            corners = _detect_marker(undistorted, dict_id, marker_cfg.id)
+            corners_list, _ids = detect_aruco_markers(
+                undistorted, marker_dict=dict_id, allowed_ids={marker_cfg.id},
+            )
+            corners = (
+                corners_list[0].reshape(4, 2).astype(np.float32)
+                if corners_list else None
+            )
             H_plane_to_img = None
             H_img_to_plane = None
             if corners is not None:

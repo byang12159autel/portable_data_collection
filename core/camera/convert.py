@@ -94,6 +94,26 @@ def convert(
     return output_lens0, output_lens1
 
 
+def resolve_lens0_mp4(video: Path, force: bool = False) -> Path:
+    """Return a per-lens-0 mp4 for ``video``, demuxing the .insv if needed.
+
+    If ``video`` is already an mp4 it's returned as-is. For an .insv the
+    sibling ``<stem>_lens0.mp4`` is used (or built via ``convert`` if it
+    doesn't exist or ``force=True``). Convenience wrapper for the common
+    "load lens 0" pattern in the gripper + replay pipelines.
+    """
+    if video.suffix.lower() != ".insv":
+        return video
+    lens0 = video.with_name(video.stem + "_lens0.mp4")
+    if lens0.exists() and not force:
+        print(f"reusing existing {lens0}")
+        return lens0
+    lens1 = video.with_name(video.stem + "_lens1.mp4")
+    print(f"demuxing {video} -> {lens0.name}, {lens1.name}")
+    convert(video, lens0, lens1, force=force)
+    return lens0
+
+
 def main(args: Args) -> None:
     out0 = args.output_lens0 or args.input.with_name(args.input.stem + "_lens0.mp4")
     out1 = args.output_lens1 or args.input.with_name(args.input.stem + "_lens1.mp4")

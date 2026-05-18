@@ -51,6 +51,17 @@ def _pinhole_K(out_width: int, out_height: int, fov_deg: float) -> np.ndarray:
     )
 
 
+def _equidistant_K(src_w: int, src_h: int) -> np.ndarray:
+    """Equidistant-fisheye intrinsics: ``f = W/pi``, principal point at center."""
+    f_eq = src_w / math.pi
+    return np.array(
+        [[f_eq, 0.0, src_w / 2.0],
+         [0.0, f_eq, src_h / 2.0],
+         [0.0, 0.0, 1.0]],
+        dtype=np.float64,
+    )
+
+
 @dataclasses.dataclass
 class Rectifier:
     """Precomputed fisheye -> pinhole remap for one lens.
@@ -133,6 +144,60 @@ class Rectifier:
             K_pinhole=K_pinhole_rough.astype(np.float64),
             map1=fixed_xy,
             map2=fixed_extra,
+            out_size=pinhole_size,
+        )
+
+    @classmethod
+    def from_subpixel_npz(
+        cls,
+        npz_path: Path,
+        src_size: tuple[int, int],
+    ) -> "Rectifier":
+        """Build a two-stage rectifier from a bench_subpixel.py output npz.
+
+        The flat-fisheye npz layout produced by ``bench_subpixel.py`` /
+        ``pinhole_calibrate.py`` carries the post-calibration ``K``,
+        ``D`` plus the equidistant-unwrap parameters (``pinhole_size``,
+        ``fov_deg``) needed to reconstruct stage 1. This is distinct
+        from the multi-lens layout consumed by ``IntrinsicsBundle``.
+
+        Stage 1 (equidistant-fisheye -> rough pinhole at K_rough) and
+        Stage 2 (pinhole undistort using calibrated ``K, D`` back to
+        ``K``) are composed into a single LUT so each frame costs one
+        ``cv2.remap``. ``K_pinhole`` on the returned rectifier is the
+        calibrated ``K``, which downstream solvePnP should use with
+        zero distortion.
+        """
+        d = np.load(str(npz_path))
+        K = np.asarray(d["K"], dtype=np.float64)
+        D = np.asarray(d["D"], dtype=np.float64)
+        pinhole_size = (int(d["pinhole_size"][0]), int(d["pinhole_size"][1]))
+        fov_deg = float(d["fov_deg"])
+
+        K_fish = _equidistant_K(src_size[0], src_size[1])
+        K_rough = _pinhole_K(pinhole_size[0], pinhole_size[1], fov_deg)
+
+        # Stage 1: equidistant fisheye -> rough pinhole.
+        s1_x, s1_y = cv2.fisheye.initUndistortRectifyMap(
+            K_fish, np.zeros((4, 1), dtype=np.float64),
+            np.eye(3, dtype=np.float64),
+            K_rough, pinhole_size, cv2.CV_32FC1,
+        )
+        # Stage 2: pinhole undistort (K, D) -> clean pinhole at K. Stage 1's
+        # actual output K is K_rough; we treat it as K under the assumption
+        # that K_rough ≈ K (the pinhole calibration refines K starting from
+        # K_rough, so the gap is tiny in practice).
+        s2_x, s2_y = cv2.initUndistortRectifyMap(
+            K, D, np.eye(3, dtype=np.float64),
+            K, pinhole_size, cv2.CV_32FC1,
+        )
+        composed_x = cv2.remap(s1_x, s2_x, s2_y, cv2.INTER_LINEAR)
+        composed_y = cv2.remap(s1_y, s2_x, s2_y, cv2.INTER_LINEAR)
+        fixed_xy, fixed_extra = cv2.convertMaps(
+            composed_x, composed_y, cv2.CV_16SC2,
+        )
+        return cls(
+            K_pinhole=K, map1=fixed_xy, map2=fixed_extra,
             out_size=pinhole_size,
         )
 
