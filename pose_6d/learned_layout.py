@@ -50,12 +50,14 @@ import numpy as np
 import tyro
 import viser
 
+from core.markers import MarkerConfig, load_marker_configs
+from core.pipeline import Detections
 from core.rectify import Rectifier
-from core.markers import (
-    MarkerConfig,
-    detect_aruco_markers,
-    load_marker_configs,
-    marker_object_points,
+from pose_6d.estimator import LearnedLayoutEstimator
+from pose_6d.layout import (
+    LearnedLayout,
+    T_to_wxyz_xyz,
+    detect_per_marker_pnp,
 )
 
 
@@ -96,84 +98,7 @@ class Args:
 
 
 # ---------------------------------------------------------------------------
-# Math helpers (copied from pose_history.py for module independence)
-# ---------------------------------------------------------------------------
-
-
-def _rvec_tvec_to_T(rvec: np.ndarray, tvec: np.ndarray) -> np.ndarray:
-    R, _ = cv2.Rodrigues(rvec)
-    T = np.eye(4, dtype=np.float64)
-    T[:3, :3] = R
-    T[:3, 3] = tvec.ravel()
-    return T
-
-
-def _R_to_quat(R: np.ndarray) -> np.ndarray:
-    """3x3 rotation matrix -> (w, x, y, z) unit quaternion."""
-    tr = np.trace(R)
-    if tr > 0:
-        s = 2.0 * math.sqrt(1.0 + tr)
-        w = 0.25 * s
-        x = (R[2, 1] - R[1, 2]) / s
-        y = (R[0, 2] - R[2, 0]) / s
-        z = (R[1, 0] - R[0, 1]) / s
-    elif R[0, 0] > R[1, 1] and R[0, 0] > R[2, 2]:
-        s = 2.0 * math.sqrt(1.0 + R[0, 0] - R[1, 1] - R[2, 2])
-        w = (R[2, 1] - R[1, 2]) / s
-        x = 0.25 * s
-        y = (R[0, 1] + R[1, 0]) / s
-        z = (R[0, 2] + R[2, 0]) / s
-    elif R[1, 1] > R[2, 2]:
-        s = 2.0 * math.sqrt(1.0 + R[1, 1] - R[0, 0] - R[2, 2])
-        w = (R[0, 2] - R[2, 0]) / s
-        x = (R[0, 1] + R[1, 0]) / s
-        y = 0.25 * s
-        z = (R[1, 2] + R[2, 1]) / s
-    else:
-        s = 2.0 * math.sqrt(1.0 + R[2, 2] - R[0, 0] - R[1, 1])
-        w = (R[1, 0] - R[0, 1]) / s
-        x = (R[0, 2] + R[2, 0]) / s
-        y = (R[1, 2] + R[2, 1]) / s
-        z = 0.25 * s
-    return np.array([w, x, y, z], dtype=np.float64)
-
-
-def _quat_to_R(q: np.ndarray) -> np.ndarray:
-    w, x, y, z = q / np.linalg.norm(q)
-    return np.array(
-        [[1 - 2 * (y * y + z * z), 2 * (x * y - z * w),     2 * (x * z + y * w)],
-         [2 * (x * y + z * w),     1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
-         [2 * (x * z - y * w),     2 * (y * z + x * w),     1 - 2 * (x * x + y * y)]],
-        dtype=np.float64,
-    )
-
-
-def _T_to_wxyz_xyz(T: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    return _R_to_quat(T[:3, :3]), T[:3, 3].astype(np.float64)
-
-
-def _avg_T(Ts: list[np.ndarray]) -> np.ndarray:
-    """Mean of 4x4 transforms: arithmetic mean translation, Markley 2007
-    quaternion mean for rotation (dominant eigenvector of sum(q qT))."""
-    if len(Ts) == 1:
-        return Ts[0].copy()
-    ts = np.stack([T[:3, 3] for T in Ts])
-    qs = np.stack([_R_to_quat(T[:3, :3]) for T in Ts])
-    # Hemisphere-align so the eigenvector picks a coherent mean
-    for i in range(1, len(qs)):
-        if np.dot(qs[0], qs[i]) < 0:
-            qs[i] = -qs[i]
-    M = qs.T @ qs
-    _, V = np.linalg.eigh(M)
-    q_avg = V[:, -1]
-    T_avg = np.eye(4, dtype=np.float64)
-    T_avg[:3, :3] = _quat_to_R(q_avg)
-    T_avg[:3, 3] = ts.mean(axis=0)
-    return T_avg
-
-
-# ---------------------------------------------------------------------------
-# Detection + PnP
+# Two-pass precompute
 # ---------------------------------------------------------------------------
 
 
@@ -200,61 +125,6 @@ def _load_all_marker_configs(paths: tuple[Path, ...]) -> dict[int, MarkerConfig]
                 raise RuntimeError(f"duplicate marker id {cfg.id} across configs")
             out[cfg.id] = cfg
     return out
-
-
-def _detect_frame(
-    rgb: np.ndarray,
-    cfgs_by_id: dict[int, MarkerConfig],
-    K: np.ndarray,
-    D: np.ndarray,
-) -> tuple[dict[int, tuple[np.ndarray, np.ndarray]], list[np.ndarray], list[int]]:
-    """Detect all configured markers in *rgb* and run single-tag PnP per marker.
-
-    Returns
-    -------
-    obs : id -> (T_camera_marker (4x4), img_pts (4,2) float32)
-    all_corners : list of detected corners (for overlay)
-    all_ids : matching tag ids (for overlay)
-    """
-    by_dict: dict[int, list[int]] = {}
-    for cfg in cfgs_by_id.values():
-        by_dict.setdefault(cfg.cv2_dictionary, []).append(cfg.id)
-
-    obs: dict[int, tuple[np.ndarray, np.ndarray]] = {}
-    all_corners: list[np.ndarray] = []
-    all_ids: list[int] = []
-    for dict_id, ids in by_dict.items():
-        corners, det_ids = detect_aruco_markers(
-            rgb, marker_dict=dict_id, allowed_ids=set(ids)
-        )
-        if det_ids is None:
-            continue
-        for c, tid in zip(corners, det_ids.flatten()):
-            tid = int(tid)
-            cfg = cfgs_by_id[tid]
-            img = c.reshape(4, 2).astype(np.float32)
-            obj = marker_object_points(cfg.size)
-            ok, rvec, tvec = cv2.solvePnP(
-                obj, img, K, D, flags=cv2.SOLVEPNP_IPPE_SQUARE
-            )
-            if ok:
-                obs[tid] = (_rvec_tvec_to_T(rvec, tvec), img)
-            all_corners.append(c)
-            all_ids.append(tid)
-    return obs, all_corners, all_ids
-
-
-# ---------------------------------------------------------------------------
-# Two-pass precompute
-# ---------------------------------------------------------------------------
-
-
-@dataclasses.dataclass
-class _FrameObs:
-    frame_idx: int
-    obs: dict[int, tuple[np.ndarray, np.ndarray]]  # tid -> (T_cam_marker, img_pts)
-    all_corners: list[np.ndarray]
-    all_ids: list[int]
 
 
 @dataclasses.dataclass
@@ -287,7 +157,10 @@ def _precompute(args: Args):
 
     # ----- Pass 1: detect + per-marker PnP, gather frame observations -----
     print("Pass 1: detect + per-marker PnP")
-    frame_obs_list: list[_FrameObs] = []
+    frame_indices: list[int] = []
+    observations: list[dict[int, tuple[np.ndarray, np.ndarray]]] = []
+    overlay_corners: list[list[np.ndarray]] = []
+    overlay_ids: list[list[int]] = []
     t0 = time.time()
     idx = -1
     while True:
@@ -298,87 +171,66 @@ def _precompute(args: Args):
         if idx % args.frame_stride != 0:
             continue
         rgb = cv2.cvtColor(rectifier.apply(bgr), cv2.COLOR_BGR2RGB)
-        obs, all_corners, all_ids = _detect_frame(rgb, cfgs_by_id, K, D)
-        frame_obs_list.append(_FrameObs(idx, obs, all_corners, all_ids))
-        if (len(frame_obs_list) % 100) == 0:
-            n_with = sum(1 for f in frame_obs_list if f.obs)
+        obs, all_corners, all_ids = detect_per_marker_pnp(rgb, cfgs_by_id, K, D)
+        frame_indices.append(idx)
+        observations.append(obs)
+        overlay_corners.append(all_corners)
+        overlay_ids.append(all_ids)
+        if (len(observations) % 100) == 0:
+            n_with = sum(1 for o in observations if o)
             print(f"  frame {idx}/{n_total}  ({n_with} with detections)")
     cap.release()
-    n_with_det = sum(1 for f in frame_obs_list if f.obs)
-    print(f"  pass 1 done in {time.time() - t0:.1f}s — {n_with_det}/{len(frame_obs_list)} frames have detections")
+    n_with_det = sum(1 for o in observations if o)
+    print(
+        f"  pass 1 done in {time.time() - t0:.1f}s — "
+        f"{n_with_det}/{len(observations)} frames have detections"
+    )
 
-    # ----- Choose anchor -----
-    seen_ids = sorted({tid for f in frame_obs_list for tid in f.obs.keys()})
-    if not seen_ids:
-        raise SystemExit("no configured markers detected in any frame")
-    anchor_id = args.anchor_id if args.anchor_id >= 0 else seen_ids[0]
-    if anchor_id not in seen_ids:
-        raise SystemExit(
-            f"anchor id {anchor_id} never detected; seen: {seen_ids}"
-        )
-    print(f"Anchor: marker {anchor_id} (seen ids: {seen_ids})")
-
-    # ----- Learn T_world_marker via averaging over co-observed frames -----
-    samples: dict[int, list[np.ndarray]] = {tid: [] for tid in seen_ids}
-    samples[anchor_id].append(np.eye(4, dtype=np.float64))
-    for f in frame_obs_list:
-        if anchor_id not in f.obs:
-            continue
-        T_cam_anchor = f.obs[anchor_id][0]
-        T_anchor_cam = np.linalg.inv(T_cam_anchor)
-        for tid, (T_cam_m, _) in f.obs.items():
-            if tid == anchor_id:
-                continue
-            samples[tid].append(T_anchor_cam @ T_cam_m)
-    T_world_marker: dict[int, np.ndarray] = {}
-    for tid, sams in samples.items():
-        if not sams:
+    # ----- Learn T_world_marker from co-observed samples -----
+    layout = LearnedLayout.from_observations(observations, cfgs_by_id, args.anchor_id)
+    seen_ids = sorted({tid for o in observations for tid in o})
+    print(f"Anchor: marker {layout.anchor_id} (seen ids: {seen_ids})")
+    for tid in seen_ids:
+        if tid not in layout.T_world_marker:
             print(f"  marker {tid}: never co-visible with anchor — excluded from layout")
             continue
-        T_world_marker[tid] = _avg_T(sams)
-        if tid != anchor_id:
-            t = T_world_marker[tid][:3, 3]
-            print(
-                f"  marker {tid}: layout from {len(sams)} samples, "
-                f"pos=({t[0]:+.3f}, {t[1]:+.3f}, {t[2]:+.3f}) m"
-            )
+        if tid == layout.anchor_id:
+            continue
+        t = layout.T_world_marker[tid][:3, 3]
+        print(
+            f"  marker {tid}: pos=({t[0]:+.3f}, {t[1]:+.3f}, {t[2]:+.3f}) m"
+        )
 
     # ----- Pass 2: multi-tag PnP per frame -> T_world_camera -----
     print("Pass 2: multi-tag PnP -> T_world_camera")
+    estimator = LearnedLayoutEstimator(layout, dist_coeffs=D)
     poses: list[_CameraPose] = []
-    for f in frame_obs_list:
-        obj_world_list: list[np.ndarray] = []
-        img_list: list[np.ndarray] = []
-        for tid, (_, img) in f.obs.items():
-            if tid not in T_world_marker:
-                continue
-            obj_local = marker_object_points(cfgs_by_id[tid].size)  # (4, 3)
-            obj_h = np.hstack([obj_local, np.ones((4, 1), dtype=np.float64)])
-            obj_world = (T_world_marker[tid] @ obj_h.T).T[:, :3].astype(np.float32)
-            obj_world_list.append(obj_world)
-            img_list.append(img)
-        if not obj_world_list:
+    for fidx, obs, corners, ids in zip(
+        frame_indices, observations, overlay_corners, overlay_ids,
+    ):
+        if not obs:
             continue
-        obj_pts = np.vstack(obj_world_list)
-        img_pts = np.vstack(img_list)
-        if len(obj_pts) < 4:
+        # Build a Detections from the per-marker PnP image points so the
+        # estimator can run pooled PnP across every marker in the layout.
+        obs_corners = np.stack(
+            [img for _T, img in obs.values()], axis=0,
+        ).astype(np.float32)
+        obs_ids = np.fromiter(obs.keys(), dtype=np.int32)
+        dets = Detections(corners=obs_corners, ids=obs_ids)
+        pose = estimator(dets, K)
+        if pose.T_world_camera is None:
             continue
-        flags = cv2.SOLVEPNP_IPPE_SQUARE if len(obj_pts) == 4 else cv2.SOLVEPNP_ITERATIVE
-        ok, rvec, tvec = cv2.solvePnP(obj_pts, img_pts, K, D, flags=flags)
-        if not ok:
-            continue
-        T_cam_world = _rvec_tvec_to_T(rvec, tvec)
         poses.append(
             _CameraPose(
-                frame_idx=f.frame_idx,
-                T_world_camera=np.linalg.inv(T_cam_world),
-                n_tags=len(obj_world_list),
-                all_corners=f.all_corners,
-                all_ids=f.all_ids,
+                frame_idx=fidx,
+                T_world_camera=pose.T_world_camera,
+                n_tags=pose.n_inliers,
+                all_corners=corners,
+                all_ids=ids,
             )
         )
     print(f"  pass 2 done — {len(poses)} camera poses recovered")
-    return poses, T_world_marker, cfgs_by_id, rectifier, anchor_id
+    return poses, layout.T_world_marker, cfgs_by_id, rectifier, layout.anchor_id
 
 
 # ---------------------------------------------------------------------------
@@ -435,7 +287,7 @@ def main(args: Args) -> None:
             colors=np.array(colour, dtype=np.uint8),
             line_width=3.0,
         )
-        wxyz, xyz = _T_to_wxyz_xyz(T_wm)
+        wxyz, xyz = T_to_wxyz_xyz(T_wm)
         server.scene.add_frame(
             f"/markers/tag{tid:03d}/frame",
             wxyz=tuple(float(v) for v in wxyz),
@@ -466,7 +318,7 @@ def main(args: Args) -> None:
     for i, p in enumerate(poses):
         if i % args.coord_frame_stride != 0:
             continue
-        wxyz, xyz = _T_to_wxyz_xyz(p.T_world_camera)
+        wxyz, xyz = T_to_wxyz_xyz(p.T_world_camera)
         server.scene.add_frame(
             f"/history/{i:05d}",
             wxyz=tuple(float(v) for v in wxyz),
@@ -551,7 +403,7 @@ def main(args: Args) -> None:
 
             if should_update:
                 p = poses[cur]
-                wxyz, xyz = _T_to_wxyz_xyz(p.T_world_camera)
+                wxyz, xyz = T_to_wxyz_xyz(p.T_world_camera)
                 current_handle.wxyz = tuple(float(v) for v in wxyz)
                 current_handle.position = tuple(float(v) for v in xyz)
                 pose_info.value = (
