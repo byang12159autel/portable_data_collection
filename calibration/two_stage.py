@@ -36,7 +36,7 @@ script. Default is 110° at 1280×1280, matching ``rectify.py``.
 
 Usage::
 
-    pixi run python -m pose_calibration.calibration.two_stage \\
+    pixi run python -m calibration.two_stage \\
         --front-video data/<recording>_lens0.mp4 \\
         --marker-config config/apriltag_board.yaml \\
         --output data/insta360_intrinsics.npz

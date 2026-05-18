@@ -13,11 +13,11 @@ apriltag_grid | multi.
 Source your ROS2 environment first, then run::
 
     # AprilGrid (default)
-    python -m pose_calibration.apps.capture_node \\
+    python -m calibration.capture \\
         --marker-configs config/apriltag_board.yaml
 
     # Combine ArUco box markers + AprilGrid in one pass
-    python -m pose_calibration.apps.capture_node --target-type multi \\
+    python -m calibration.capture --target-type multi \\
         --marker-configs config/aruco_set.yaml config/apriltag_board.yaml
 """
 

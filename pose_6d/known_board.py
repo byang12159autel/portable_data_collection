@@ -15,7 +15,7 @@ The viser scene shows:
 
 Usage::
 
-    pixi run python -m pose_calibration.pose.known_board \\
+    pixi run python -m pose_6d.known_board \\
         --video data/insta360_calibration/lens0_combined.mp4 \\
         --intrinsics data/insta360_calibration/lens0_combined_subpixel_best.npz \\
         --marker-config config/apriltag_board.yaml \\

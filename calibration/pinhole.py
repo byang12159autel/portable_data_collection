@@ -13,7 +13,7 @@ without the fisheye/pinhole_rough entries that don't apply here.
 
 Usage::
 
-    pixi run python -m pose_calibration.calibration.pinhole \\
+    pixi run python -m calibration.pinhole \\
         --video data/insta360_calibration/app_export_singlelens.mp4 \\
         --marker-config config/apriltag_board.yaml \\
         --output data/insta360_calibration/pinhole_intrinsics.npz
