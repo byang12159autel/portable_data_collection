@@ -129,6 +129,57 @@ class Calibrator(Protocol):
 
 
 @dataclasses.dataclass
+class GripperState:
+    """One frame's gripper-state estimate.
+
+    Fields are populated only when the underlying step succeeded:
+
+      - ``H_plane_to_img`` / ``H_img_to_plane``: set when the anchor marker
+        was detected and single-marker PnP returned a valid pose.
+      - ``centers_plane``: the 4 chopstick-dot positions in marker-plane
+        metres, populated when dot detection found enough dots to compute
+        an angle.
+      - ``ordered_centers``: the same 4 points keyed as ``left_top``,
+        ``left_bottom``, ``right_top``, ``right_bottom``.
+      - ``angle_deg``: the in-plane chopstick hinge angle.
+
+    Diagnostic counters (``n_white_dots``, ``n_black_dots``) carry the
+    number of dot candidates that survived the marker-area filter, useful
+    for tuning thresholds.
+    """
+
+    angle_deg: float | None = None
+    centers_plane: np.ndarray | None = None
+    ordered_centers: dict[str, np.ndarray] | None = None
+    H_plane_to_img: np.ndarray | None = None
+    H_img_to_plane: np.ndarray | None = None
+    n_white_dots: int = 0
+    n_black_dots: int = 0
+
+
+@runtime_checkable
+class GripperEstimator(Protocol):
+    """Per-frame gripper-state estimator.
+
+    Consumes the rectified frame (needs raw pixels for dot detection),
+    the marker ``Detections`` from the shared ``Detector`` stage, and the
+    rectified-camera intrinsics. Returns a ``GripperState``; on failure
+    of any sub-step the relevant fields are simply left as ``None`` /
+    ``0`` rather than raising, so the caller can decide what to log.
+
+    Implementations own the choice of *which* marker anchors the hinge
+    plane — they filter ``Detections`` for their configured marker ID.
+    """
+
+    def __call__(
+        self,
+        rectified: np.ndarray,
+        detections: Detections,
+        K: np.ndarray,
+    ) -> GripperState: ...
+
+
+@dataclasses.dataclass
 class DataPipeline:
     """rectify -> detect -> [optional pose].
 
@@ -176,3 +227,40 @@ class PreviewPipeline:
             rgb, k = fn(rgb)
             n_total += k
         return rgb, n_total
+
+
+@dataclasses.dataclass
+class RigPipeline:
+    """rectify -> detect -> [pose_estimator] + [gripper_estimator].
+
+    Both estimators consume the same ``Detections``, so the marker pass
+    runs once per frame regardless of which estimators are wired in.
+    Either estimator may be ``None`` to disable that branch — this
+    degrades to a single-component pipeline without code duplication.
+
+    Marker-set overlap: if the gripper anchor marker is also in the
+    pose-estimator's world layout, a single shared detector is enough.
+    Otherwise the detector should be configured with both marker sets
+    so its ``Detections`` cover both consumers.
+    """
+
+    rectifier: Rectifier
+    detector: Detector
+    pose_estimator: PoseEstimator | None = None
+    gripper_estimator: GripperEstimator | None = None
+
+    def process(
+        self, frame: np.ndarray,
+    ) -> tuple[np.ndarray, Detections, FramePose | None, GripperState | None]:
+        rectified = self.rectifier.apply(frame)
+        detections = self.detector(rectified)
+        K = self.rectifier.K_pinhole
+        pose = (
+            self.pose_estimator(detections, K)
+            if self.pose_estimator is not None else None
+        )
+        gripper = (
+            self.gripper_estimator(rectified, detections, K)
+            if self.gripper_estimator is not None else None
+        )
+        return rectified, detections, pose, gripper
