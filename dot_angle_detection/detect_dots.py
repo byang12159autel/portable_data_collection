@@ -2,15 +2,27 @@ import cv2
 import numpy as np
 
 
-def detect_black_circular_dots(
+def _detect_circular_dots(
     frame,
+    polarity: str,
     K=None,
     D=None,
-    threshold=80,
-    min_area=20,
-    max_area=5000,
-    min_circularity=0.55,
+    threshold: int = 80,
+    min_area: int = 70,
+    max_area: int = 700,
+    min_circularity: float = 0.55,
 ):
+    """Shared core for black-on-light and white-on-dark dot detection.
+
+    ``polarity`` is ``"dark"`` (find dark blobs on a light background;
+    default for the chopstick black dots) or ``"light"`` (find bright
+    blobs on a dark background; default for the chopstick white dots).
+    The only thing that differs between the two passes is the
+    ``cv2.threshold`` direction.
+    """
+    if polarity not in ("dark", "light"):
+        raise ValueError(f"polarity must be 'dark' or 'light', got {polarity!r}")
+
     # 1. Undistort
     if K is not None and D is not None:
         frame = cv2.undistort(frame, K, D)
@@ -21,13 +33,11 @@ def detect_black_circular_dots(
     # 3. Slight blur
     gray_blur = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    # 4. Threshold black dots
-    _, mask = cv2.threshold(
-        gray_blur,
-        threshold,
-        255,
-        cv2.THRESH_BINARY_INV,
+    # 4. Threshold by polarity.
+    thresh_type = (
+        cv2.THRESH_BINARY_INV if polarity == "dark" else cv2.THRESH_BINARY
     )
+    _, mask = cv2.threshold(gray_blur, threshold, 255, thresh_type)
 
     # 5. Morphology cleanup
     kernel = np.ones((3, 3), np.uint8)
@@ -80,9 +90,47 @@ def detect_black_circular_dots(
             "axes": axes,
             "ellipse_angle": ellipse_angle,
             "contour": c,
+            "polarity": polarity,
         })
 
     return detections, mask
+
+
+def detect_black_circular_dots(
+    frame,
+    K=None,
+    D=None,
+    threshold: int = 80,
+    min_area: int = 70,
+    max_area: int = 700,
+    min_circularity: float = 0.55,
+):
+    """Find dark circular dots on a light background (chopstick black dots)."""
+    return _detect_circular_dots(
+        frame, "dark", K=K, D=D, threshold=threshold,
+        min_area=min_area, max_area=max_area, min_circularity=min_circularity,
+    )
+
+
+def detect_white_circular_dots(
+    frame,
+    K=None,
+    D=None,
+    threshold: int = 175,
+    min_area: int = 70,
+    max_area: int = 700,
+    min_circularity: float = 0.55,
+):
+    """Find bright circular dots on a dark background (chopstick white dots).
+
+    Threshold semantics flip from ``detect_black_circular_dots``: pixels
+    **above** ``threshold`` are kept. Default is 175 (bright pixel cutoff)
+    but tune for your lighting via the same workflow.
+    """
+    return _detect_circular_dots(
+        frame, "light", K=K, D=D, threshold=threshold,
+        min_area=min_area, max_area=max_area, min_circularity=min_circularity,
+    )
 
 
 def draw_detections(frame, detections):
