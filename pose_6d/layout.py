@@ -16,9 +16,11 @@ from __future__ import annotations
 
 import dataclasses
 import math
+from pathlib import Path  # noqa: TC003 — runtime use in save/load signatures
 
 import cv2
 import numpy as np
+import yaml
 
 from core.markers import MarkerConfig, detect_aruco_markers, marker_object_points
 
@@ -213,6 +215,61 @@ class LearnedLayout:
             if not sams:
                 continue
             T_world_marker[tid] = avg_T(sams)
+        return cls(
+            T_world_marker=T_world_marker,
+            marker_configs=marker_configs,
+            anchor_id=anchor_id,
+        )
+
+    def save(self, path: Path) -> None:
+        """Write the layout to a self-contained yaml.
+
+        Format mirrors the inputs the layout was learned from (one entry
+        per marker carrying ``id`` / ``size`` / ``dictionary``) plus a
+        ``T_world_marker`` block on each entry (translation in metres +
+        wxyz unit quaternion) and a top-level ``anchor_id``. Re-readable
+        with :meth:`load` without needing the original
+        ``--world-marker-configs`` YAMLs.
+        """
+        data: dict = {
+            "anchor_id": int(self.anchor_id),
+            "markers": {},
+        }
+        for tid in sorted(self.T_world_marker):
+            cfg = self.marker_configs[tid]
+            wxyz, xyz = T_to_wxyz_xyz(self.T_world_marker[tid])
+            data["markers"][f"tag{tid}"] = {
+                "id": int(cfg.id),
+                "size": float(cfg.size),
+                "dictionary": cfg.dictionary,
+                "label": cfg.label,
+                "T_world_marker": {
+                    "translation": [float(v) for v in xyz],
+                    "quat_wxyz": [float(v) for v in wxyz],
+                },
+            }
+        with open(path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(data, f, sort_keys=False)
+
+    @classmethod
+    def load(cls, path: Path) -> "LearnedLayout":
+        """Inverse of :meth:`save`."""
+        with open(path, encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        anchor_id = int(data["anchor_id"])
+        T_world_marker: dict[int, np.ndarray] = {}
+        marker_configs: dict[int, MarkerConfig] = {}
+        known = {f.name for f in dataclasses.fields(MarkerConfig)}
+        for entry in data.get("markers", {}).values():
+            tid = int(entry["id"])
+            cfg_fields = {k: v for k, v in entry.items() if k in known}
+            marker_configs[tid] = MarkerConfig(**cfg_fields)
+            T = np.eye(4, dtype=np.float64)
+            block = entry["T_world_marker"]
+            q = np.asarray(block["quat_wxyz"], dtype=np.float64)
+            T[:3, :3] = quat_to_R(q)
+            T[:3, 3] = np.asarray(block["translation"], dtype=np.float64)
+            T_world_marker[tid] = T
         return cls(
             T_world_marker=T_world_marker,
             marker_configs=marker_configs,

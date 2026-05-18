@@ -68,7 +68,22 @@ class Args:
 
     world_marker_configs: tuple[Path, ...] = ()
     """YAMLs defining the markers fixed in the world for camera-pose tracking.
-    Anchor (world origin) is the lowest ID seen unless --anchor-id overrides."""
+    Anchor (world origin) is the lowest ID seen unless --anchor-id overrides.
+    Not required on a cache hit (the cache is self-contained)."""
+
+    layout_cache: Path | None = None
+    """Where to cache the learned world layout. Defaults to
+    ``<video-stem>_layout.yaml`` alongside the source video. On a hit
+    rig_replay skips pass 1 and loads the layout instead. Pass
+    ``--force-relearn`` to bypass an existing cache."""
+
+    force_relearn: bool = False
+    """Ignore any existing layout cache and rebuild from pass 1."""
+
+    save_layout: bool = True
+    """Persist the freshly-learned layout to ``--layout-cache``. Off when
+    you're iterating on the learning step and don't want to overwrite a
+    known-good cache."""
 
     hinge_marker_config: Path | None = None
     """YAML with the marker rigidly attached to the gripper. The hinge plane
@@ -231,14 +246,6 @@ def main(args: Args) -> None:
         f"dict={hinge_cfg.dictionary}"
     )
 
-    world_cfgs = _load_world_configs(args.world_marker_configs)
-    if not world_cfgs:
-        raise SystemExit("--world-marker-configs is required")
-    print(f"world markers: {sorted((tid, c.size, c.dictionary) for tid, c in world_cfgs.items())}")
-    if hinge_cfg.id in world_cfgs:
-        print(f"note: hinge marker {hinge_cfg.id} also appears in world layout — "
-              "it will be tracked in both branches")
-
     cap = cv2.VideoCapture(str(lens0_mp4))
     if not cap.isOpened():
         raise SystemExit(f"could not open {lens0_mp4}")
@@ -253,7 +260,34 @@ def main(args: Args) -> None:
     print(f"video: {lens0_mp4} {src_w}x{src_h} @ {src_fps:.1f} FPS, {n_total} frames")
     print(f"undistort -> {out_w}x{out_h} pinhole (K fx={K[0,0]:.1f})")
 
-    layout = _learn_layout(cap, rectifier, world_cfgs, K, args.anchor_id, args.learn_stride)
+    cache_path = args.layout_cache or args.video.with_name(
+        args.video.stem + "_layout.yaml"
+    )
+    if cache_path.exists() and not args.force_relearn:
+        print(f"loading world layout from cache: {cache_path}")
+        layout = LearnedLayout.load(cache_path)
+        world_cfgs = layout.marker_configs
+        print(
+            "  anchor: marker {layout.anchor_id} "
+            f"(cached markers: {sorted(layout.T_world_marker)})".format(layout=layout)
+        )
+    else:
+        world_cfgs = _load_world_configs(args.world_marker_configs)
+        if not world_cfgs:
+            raise SystemExit(
+                "no layout cache found and --world-marker-configs is empty "
+                f"(looked for {cache_path}; pass --world-marker-configs or "
+                "point --layout-cache at an existing yaml)"
+            )
+        layout = _learn_layout(cap, rectifier, world_cfgs, K, args.anchor_id, args.learn_stride)
+        if args.save_layout:
+            layout.save(cache_path)
+            print(f"saved layout to {cache_path}")
+
+    print(f"world markers: {sorted((tid, c.size, c.dictionary) for tid, c in world_cfgs.items())}")
+    if hinge_cfg.id in world_cfgs:
+        print(f"note: hinge marker {hinge_cfg.id} also appears in world layout — "
+              "it will be tracked in both branches")
 
     # Detector covers both branches: world layout ids + hinge anchor id.
     by_dict: dict[int, set[int]] = {}
